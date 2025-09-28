@@ -41,7 +41,7 @@ python main.py \
 
 主なオプション:
 
-- `--event-url` (複数可): 放送予定JSONのURL。
+- `--event-url` (スペース区切りで複数可): 放送予定JSONのURL。
 - `--area`: config_web.xmlの`<area>`値。例: `tokyo`, `osaka`。
 - `--service`: `r1`, `r2`, `fm` のいずれか。JSONから判別できない場合に指定。
 - `--variant`: `auto`, `master`, `master48k`のいずれか。HLSプレイリストのバリアント選択。

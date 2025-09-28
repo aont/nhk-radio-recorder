@@ -19,15 +19,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="NHKラジオ HLS 録音予約 (asyncio + ffmpeg)")
     parser.add_argument(
         "--event-url",
-        action="append",
+        action="extend",
+        nargs="+",
         default=[],
-        help="放送予定（BroadcastEvent）JSONのURL。複数指定可。",
+        help="放送予定（BroadcastEvent）JSONのURL。スペース区切りで複数指定可。",
     )
     parser.add_argument(
         "--series-id",
-        action="append",
+        action="extend",
+        nargs="+",
         default=[],
-        help="シリーズID（例: Z9L1V2M24L）。対応する放送予定JSONを自動取得。",
+        help="シリーズID（例: Z9L1V2M24L）。スペース区切りで複数指定可。",
     )
     parser.add_argument(
         "--area",
