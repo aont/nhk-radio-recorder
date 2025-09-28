@@ -5,9 +5,16 @@ from __future__ import annotations
 import datetime as dt
 import re
 from typing import Any, Dict, Iterable, Optional
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-JP_TZ = ZoneInfo("Asia/Tokyo")
+try:
+    JP_TZ = ZoneInfo("Asia/Tokyo")
+except ZoneInfoNotFoundError:
+    # ``tzdata`` is not bundled with the Windows installer, so fall back to a
+    # fixed-offset timezone when the IANA database is unavailable. The
+    # difference between UTC+09:00 and ``Asia/Tokyo`` is negligible for NHK
+    # programming schedules which do not observe DST.
+    JP_TZ = dt.timezone(dt.timedelta(hours=9))
 
 
 def parse_iso8601(value: Any, default_tz: ZoneInfo = JP_TZ) -> Optional[dt.datetime]:
