@@ -1,2 +1,2 @@
 aiohttp>=3.8,<4.0
-git+https://github.com/aont/python-sleep-absolute.git
+sleep-absolute @ git+https://github.com/aont/python-sleep-absolute.git
