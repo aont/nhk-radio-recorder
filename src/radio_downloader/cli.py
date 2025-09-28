@@ -52,6 +52,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--postpad", type=int, default=30, help="終了後の余裕秒")
     parser.add_argument("--loglevel", default="error", help="ffmpeg の -loglevel（例: error, warning, info）")
     parser.add_argument("--dry-run", action="store_true", help="録音せず予約内容を表示")
+    parser.add_argument(
+        "--refresh-sec",
+        type=int,
+        default=300,
+        help="放送予定JSONを再取得する間隔（秒）。0以下で無効化。",
+    )
     return parser
 
 
@@ -68,76 +74,128 @@ async def run_async(args: argparse.Namespace) -> None:
                 )
             )
 
-        tasks: List[asyncio.Task] = []
+        manual_event_urls = list(args.event_url)
+        series_ids = list(args.series_id)
 
-        event_urls = list(args.event_url)
-
-        for series_id in args.series_id:
-            dt_now = _datetime.datetime.now()
-            query_to = (dt_now + _datetime.timedelta(days=1.0)).strftime("%Y-%m-%dT%H:%M")
-            base_url = f"https://api.nhk.jp/r7/f/broadcastevent/rs/{series_id}.json"
-            event_urls.append(f"{base_url}?to={query_to}&status=scheduled")
-
-        if not event_urls:
+        if not manual_event_urls and not series_ids:
             raise SystemExit("--event-url か --series-id のいずれかを指定してください。")
 
-        for url in event_urls:
-            events = await fetch_events(session, url)
+        scheduled_keys: set[str] = set()
+        tasks: set[asyncio.Task[None]] = set()
 
-            for event in events:
-                service = event.service or args.service or "r2"
-                area = (event.area or args.area).lower()
+        def _on_task_done(task: asyncio.Task[None]) -> None:
+            tasks.discard(task)
+            try:
+                task.result()
+            except Exception as exc:  # pragma: no cover - logging only
+                print(f"[ERROR] 録音タスクで例外が発生しました: {exc}")
 
-                svc_map = area_map.get(area)
-                if not svc_map or service not in svc_map:
-                    if service != "r2" and svc_map and "r2" in svc_map:
-                        service = "r2"
-                    elif svc_map:
-                        available = ", ".join(sorted(svc_map.keys()))
-                        raise SystemExit(
-                            f"area='{area}' に service='{service}' が見つかりません（利用可能: {available}）。"
-                        )
+        def _build_event_urls() -> List[str]:
+            urls = list(manual_event_urls)
+            if series_ids:
+                dt_now = _datetime.datetime.now()
+                query_to = (dt_now + _datetime.timedelta(days=1.0)).strftime("%Y-%m-%dT%H:%M")
+                for series_id in series_ids:
+                    base_url = f"https://api.nhk.jp/r7/f/broadcastevent/rs/{series_id}.json"
+                    urls.append(f"{base_url}?to={query_to}&status=scheduled")
+            return urls
 
-                hls = area_map.get(area, {}).get(service)
-                if not hls:
-                    raise SystemExit(
-                        f"HLS URL が取得できませんでした: area={area}, service={service}"
-                    )
-
-                hls = pick_variant(hls, args.variant)
-
-                if args.dry_run:
-                    print(f"[DRY-RUN] {event.title} ({service}@{area})")
-                    print(
-                        "  time: {} → {} (dur={}s)".format(
-                            event.start.isoformat(),
-                            event.end.isoformat(),
-                            int(event.duration.total_seconds()),
-                        )
-                    )
-                    print(f"  HLS : {hls}")
+        async def _schedule_new_events() -> int:
+            added = 0
+            for url in _build_event_urls():
+                try:
+                    events = await fetch_events(session, url)
+                except Exception as exc:
+                    print(f"[WARN] 放送予定の取得に失敗しました ({url}): {exc}")
                     continue
 
-                task = asyncio.create_task(
-                    record_one(
-                        event=event,
-                        hls_url=hls,
-                        outdir=outdir,
-                        prepad=args.prepad,
-                        postpad=args.postpad,
-                        ffmpeg_path=args.ffmpeg,
-                        loglevel=args.loglevel,
+                for event in events:
+                    event_key = f"{event.event_id or 'noid'}::{event.start.isoformat()}"
+                    if not event.event_id:
+                        event_key += f"::{event.title}"
+                    if event_key in scheduled_keys:
+                        continue
+
+                    now = _datetime.datetime.now(tz=event.start.tzinfo)
+                    if event.end <= now:
+                        scheduled_keys.add(event_key)
+                        continue
+
+                    service = event.service or args.service or "r2"
+                    area = (event.area or args.area).lower()
+
+                    svc_map = area_map.get(area)
+                    if not svc_map or service not in svc_map:
+                        if service != "r2" and svc_map and "r2" in svc_map:
+                            service = "r2"
+                        elif svc_map:
+                            available = ", ".join(sorted(svc_map.keys()))
+                            raise SystemExit(
+                                f"area='{area}' に service='{service}' が見つかりません（利用可能: {available}）。"
+                            )
+
+                    hls = area_map.get(area, {}).get(service)
+                    if not hls:
+                        raise SystemExit(
+                            f"HLS URL が取得できませんでした: area={area}, service={service}"
+                        )
+
+                    hls = pick_variant(hls, args.variant)
+
+                    if args.dry_run:
+                        print(f"[DRY-RUN] {event.title} ({service}@{area})")
+                        print(
+                            "  time: {} → {} (dur={}s)".format(
+                                event.start.isoformat(),
+                                event.end.isoformat(),
+                                int(event.duration.total_seconds()),
+                            )
+                        )
+                        print(f"  HLS : {hls}")
+                        scheduled_keys.add(event_key)
+                        continue
+
+                    task = asyncio.create_task(
+                        record_one(
+                            event=event,
+                            hls_url=hls,
+                            outdir=outdir,
+                            prepad=args.prepad,
+                            postpad=args.postpad,
+                            ffmpeg_path=args.ffmpeg,
+                            loglevel=args.loglevel,
+                        )
                     )
-                )
-                tasks.append(task)
+                    task.add_done_callback(_on_task_done)
+                    tasks.add(task)
+                    scheduled_keys.add(event_key)
+                    added += 1
+                    print(
+                        f"[SCHEDULED] {event.title} ({service}@{area}) "
+                        f"{event.start.isoformat()} → {event.end.isoformat()}"
+                    )
+
+            return added
+
+        added_initial = await _schedule_new_events()
 
         if args.dry_run:
             return
 
-        if tasks:
-            await asyncio.gather(*tasks)
-        else:
-            print("実行する録音タスクがありません。")
+        if added_initial == 0:
+            print("録音タスクが見つかりませんでした。新しい放送予定を監視します。")
+
+        refresh = max(0, args.refresh_sec)
+
+        if refresh <= 0:
+            # 追加取得を行わず、現在のタスクのみ待機
+            if tasks:
+                await asyncio.gather(*tasks)
+            return
+
+        while True:
+            await asyncio.sleep(refresh)
+            await _schedule_new_events()
 
 
 def main(argv: List[str] | None = None) -> None:

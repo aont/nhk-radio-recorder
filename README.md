@@ -8,6 +8,7 @@ NHKラジオの放送予定JSONとHLSストリームを利用して、ffmpegで�
 - 放送予定（BroadcastEvent）JSONを柔軟に解析し、番組情報を抽出
 - 録音失敗時は自動的にMP3へフォールバックエンコード
 - `--dry-run`で予約内容だけを確認可能
+- 定期的に放送予定を再取得し、新しい番組があれば自動的に録音予約へ追加
 
 ## 必要環境
 
@@ -44,6 +45,7 @@ python main.py \
 - `--area`: config_web.xmlの`<area>`値。例: `tokyo`, `osaka`。
 - `--service`: `r1`, `r2`, `fm` のいずれか。JSONから判別できない場合に指定。
 - `--variant`: `auto`, `master`, `master48k`のいずれか。HLSプレイリストのバリアント選択。
+- `--refresh-sec`: 放送予定JSONを定期的に再取得する間隔（秒）。既定は 300 秒。
 - `--dry-run`: 録音せず予約内容のみ表示。
 
 詳細は `python main.py --help` で確認できます。
