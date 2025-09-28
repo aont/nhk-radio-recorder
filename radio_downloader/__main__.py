@@ -77,6 +77,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Increase logging verbosity",
     )
+    parser.add_argument(
+        "--poll-interval",
+        type=int,
+        default=900,
+        help="Seconds between schedule refresh checks (default: 900)",
+    )
     return parser
 
 
@@ -119,6 +125,7 @@ def main(argv: Optional[list[str]] = None) -> None:
                 ffmpeg_path=args.ffmpeg,
                 ffmpeg_log_level=args.ffmpeg_log_level,
                 dry_run=args.dry_run,
+                poll_interval_seconds=max(args.poll_interval, 0),
             )
         )
     except KeyboardInterrupt:

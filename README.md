@@ -28,6 +28,7 @@ python -m radio_downloader <シリーズID> [オプション]
 | `--start-after` | 指定したISO形式時刻より前に始まる番組を除外 | 指定なし |
 | `--dry-run` | ffmpegを実行せずに予約内容のみ表示 | - |
 | `--verbose` | 詳細ログを表示 | - |
+| `--poll-interval` | 放送予定の再取得を行う間隔（秒） | `900` |
 
 ### 例
 
@@ -37,4 +38,4 @@ python -m radio_downloader <シリーズID> [オプション]
 python -m radio_downloader Z9L1V2M24L --area tokyo --lead-in 60 --tail-out 180
 ```
 
-録音ファイルは `recordings` ディレクトリに `YYYYMMDDTHHMMSSZ_タイトル.m4a` 形式で保存されます。`--dry-run` を付けるとffmpegは起動せず計画のみを表示します。
+録音ファイルは `recordings` ディレクトリに `YYYYMMDDTHHMMSSZ_タイトル.m4a` 形式で保存されます。`--dry-run` を付けるとffmpegは起動せず計画のみを表示します。スケジューラは既定で15分ごとに放送予定を再取得し、新しい番組が見つかれば自動的に予約へ追加します。

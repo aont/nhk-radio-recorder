@@ -7,7 +7,7 @@ import shlex
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Dict, List, Optional, Set
 
 import aiohttp
 
@@ -234,22 +234,6 @@ async def prepare_plans(
     return plans
 
 
-async def schedule_recordings(
-    plans: Iterable[RecordingPlan],
-    ffmpeg_path: str,
-    log_level: str,
-    dry_run: bool = False,
-) -> None:
-    tasks = [
-        asyncio.create_task(execute_recording(plan, ffmpeg_path, log_level, dry_run))
-        for plan in plans
-    ]
-    if not tasks:
-        LOGGER.warning("No recordings to schedule")
-        return
-    await asyncio.gather(*tasks)
-
-
 async def run_scheduler(
     series_id: str,
     area: str,
@@ -262,6 +246,7 @@ async def run_scheduler(
     ffmpeg_path: str,
     ffmpeg_log_level: str,
     dry_run: bool,
+    poll_interval_seconds: int = 900,
 ) -> None:
     LOGGER.debug(
         "run_scheduler called with series_id=%s area=%s output_dir=%s lead_in=%ss tail_out=%ss default_duration_minutes=%s max_events=%s earliest_start=%s dry_run=%s",
@@ -287,29 +272,118 @@ async def run_scheduler(
 
     output_dir = output_dir.expanduser()
 
+    poll_interval = max(poll_interval_seconds, 0)
+    scheduled_event_ids: Set[str] = set()
+    active_tasks: Dict[asyncio.Task, RecordingPlan] = {}
+
+    warned_no_events = False
+
     async with aiohttp.ClientSession() as session:
-        plans = await prepare_plans(
-            session=session,
-            series_id=series_id,
-            area_key=area,
-            output_dir=output_dir,
-            lead_in=lead_in,
-            tail_out=tail_out,
-            default_duration=default_duration,
-            max_events=max_events,
-            earliest_start=earliest_start,
-        )
+        try:
+            while True:
+                plans = await prepare_plans(
+                    session=session,
+                    series_id=series_id,
+                    area_key=area,
+                    output_dir=output_dir,
+                    lead_in=lead_in,
+                    tail_out=tail_out,
+                    default_duration=default_duration,
+                    max_events=max_events,
+                    earliest_start=earliest_start,
+                )
 
-    if not plans:
-        LOGGER.warning("No future events found for series %s in area %s", series_id, area)
-        return
+                new_plans: List[RecordingPlan] = []
+                for plan in plans:
+                    event_id = plan.event.broadcast_event_id
+                    if event_id in scheduled_event_ids:
+                        LOGGER.debug(
+                            "Event '%s' already scheduled, skipping",
+                            plan.event.title,
+                        )
+                        continue
+                    scheduled_event_ids.add(event_id)
+                    new_plans.append(plan)
 
-    LOGGER.info("Prepared %d recording plan(s)", len(plans))
-    for plan in plans:
-        LOGGER.info(
-            "Event '%s' scheduled at %s",
-            plan.event.title,
-            plan.start_time.isoformat(),
-        )
+                if new_plans:
+                    warned_no_events = False
+                    LOGGER.info("Prepared %d new recording plan(s)", len(new_plans))
+                    for plan in new_plans:
+                        LOGGER.info(
+                            "Event '%s' scheduled at %s",
+                            plan.event.title,
+                            plan.start_time.isoformat(),
+                        )
+                        task = asyncio.create_task(
+                            execute_recording(
+                                plan,
+                                ffmpeg_path=ffmpeg_path,
+                                log_level=ffmpeg_log_level,
+                                dry_run=dry_run,
+                            )
+                        )
+                        active_tasks[task] = plan
+                elif not active_tasks and not warned_no_events:
+                    LOGGER.warning(
+                        "No future events found for series %s in area %s",
+                        series_id,
+                        area,
+                    )
+                    warned_no_events = True
 
-    await schedule_recordings(plans, ffmpeg_path=ffmpeg_path, log_level=ffmpeg_log_level, dry_run=dry_run)
+                # Remove any tasks that completed without going through asyncio.wait
+                for task in list(active_tasks):
+                    if task.done():
+                        plan = active_tasks.pop(task)
+                        try:
+                            await task
+                        except asyncio.CancelledError:
+                            LOGGER.info(
+                                "Recording task for '%s' was cancelled",
+                                plan.event.title,
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            LOGGER.exception(
+                                "Recording task for '%s' failed: %s",
+                                plan.event.title,
+                                exc,
+                            )
+
+                if active_tasks:
+                    warned_no_events = False
+                    done, _ = await asyncio.wait(
+                        tuple(active_tasks.keys()),
+                        timeout=poll_interval,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    for task in done:
+                        plan = active_tasks.pop(task, None)
+                        try:
+                            await task
+                        except asyncio.CancelledError:
+                            if plan:
+                                LOGGER.info(
+                                    "Recording task for '%s' was cancelled",
+                                    plan.event.title,
+                                )
+                        except Exception as exc:  # noqa: BLE001
+                            if plan:
+                                LOGGER.exception(
+                                    "Recording task for '%s' failed: %s",
+                                    plan.event.title,
+                                    exc,
+                                )
+                            else:
+                                LOGGER.exception("Recording task failed: %s", exc)
+                else:
+                    await asyncio.sleep(poll_interval)
+        except asyncio.CancelledError:
+            for task, plan in active_tasks.items():
+                if not task.done():
+                    task.cancel()
+                    LOGGER.debug(
+                        "Cancelling recording task for '%s'", plan.event.title
+                    )
+            if active_tasks:
+                await asyncio.gather(*tuple(active_tasks.keys()), return_exceptions=True)
+            raise
