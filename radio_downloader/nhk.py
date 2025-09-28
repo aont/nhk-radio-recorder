@@ -71,7 +71,16 @@ async def fetch_broadcast_events(
 
     query_to = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M")
     url = f"{_EVENT_API_TEMPLATE}/{series_id}.json?to={query_to}&status=scheduled"
-    payload = await _json_request(session, url)
+    try:
+        payload = await _json_request(session, url)
+    except aiohttp.ClientResponseError as exc:
+        if exc.status == 404:
+            return []
+        raise
+
+    error_block = payload.get("error")
+    if isinstance(error_block, dict) and error_block.get("statuscode") == 404:
+        return []
 
     events: List[BroadcastEvent] = []
     for item in payload.get("result", []):
