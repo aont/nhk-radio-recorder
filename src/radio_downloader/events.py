@@ -152,6 +152,35 @@ def extract_events_from_json(payload: Any) -> List[NHKEvent]:
     return events
 
 
+def _is_no_schedule_payload(payload: Any) -> bool:
+    """Return ``True`` when *payload* represents a "no schedule" response."""
+
+    if not isinstance(payload, dict):
+        return False
+
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return False
+
+    status = error.get("statuscode")
+    message = error.get("message")
+
+    try:
+        status_int = int(status)
+    except (TypeError, ValueError):
+        return False
+
+    if status_int != 404:
+        return False
+
+    if isinstance(message, str):
+        normalized = message.strip().lower()
+        if normalized in {"not found", "not found."}:
+            return True
+
+    return False
+
+
 async def fetch_events(session: aiohttp.ClientSession, url: str) -> List[NHKEvent]:
     """Fetch a broadcast schedule JSON and convert it into ``NHKEvent`` records."""
 
@@ -162,6 +191,8 @@ async def fetch_events(session: aiohttp.ClientSession, url: str) -> List[NHKEven
 
     events = extract_events_from_json(payload)
     if not events:
+        if _is_no_schedule_payload(payload):
+            return []
         snippet = json.dumps(payload, ensure_ascii=False)[:500]
         raise RuntimeError(
             "放送予定JSONからイベントを抽出できませんでした: "
