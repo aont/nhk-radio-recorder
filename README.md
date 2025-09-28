@@ -1,42 +1,41 @@
 # radio-downloader
-[English documentation is available here.](README.en.md)
 
-NHKのラジオ番組をHLSストリームからffmpegで保存するための非同期ツールです。番組の放送予定をNHKの公開APIから取得し、指定した番組シリーズの放送開始時刻に合わせてffmpegの実行を予約します。
+An asynchronous tool for saving NHK radio programs from HLS streams with ffmpeg. It retrieves broadcast schedules from NHK's public API and queues ffmpeg executions so that recording starts at the right time for the specified series.
 
-## 必要要件
+## Requirements
 
-- Python 3.11 以降
+- Python 3.11 or later
 - ffmpeg
 
-依存パッケージは `pip install -r requirements.txt` でインストールできます。
+Install the Python dependencies with `pip install -r requirements.txt`.
 
-## 使い方
+## Usage
 
 ```
-python -m radio_downloader <シリーズID> [オプション]
+python -m radio_downloader <series_id> [options]
 ```
 
-### 主なオプション
+### Main options
 
-| オプション | 説明 | 既定値 |
+| Option | Description | Default |
 | --- | --- | --- |
-| `--area` | 放送地域のキーまたはスラッグ。例: `130` (東京), `osaka` | `130` |
-| `--output-dir` | 録音ファイルの保存先ディレクトリ | `recordings` |
-| `--lead-in` | 放送開始前に録音を開始する秒数 | `60` |
-| `--tail-out` | 放送終了後も録音を継続する秒数 | `120` |
-| `--default-duration` | 放送終了時刻が取得できない場合に使う分単位の長さ | 指定なし |
-| `--max-events` | 今後の放送予定から予約する件数 | `1` |
-| `--start-after` | 指定したISO形式時刻より前に始まる番組を除外 | 指定なし |
-| `--dry-run` | ffmpegを実行せずに予約内容のみ表示 | - |
-| `--verbose` | 詳細ログを表示 | - |
-| `--poll-interval` | 放送予定の再取得を行う間隔（秒） | `900` |
+| `--area` | Area key or slug, e.g. `130` (Tokyo), `osaka` | `130` |
+| `--output-dir` | Directory where recordings are stored | `recordings` |
+| `--lead-in` | Seconds to start recording before the broadcast starts | `60` |
+| `--tail-out` | Seconds to keep recording after the broadcast ends | `120` |
+| `--default-duration` | Fallback length in minutes when the end time is unavailable | None |
+| `--max-events` | Number of upcoming broadcasts to schedule | `1` |
+| `--start-after` | Ignore broadcasts that start before the provided ISO timestamp | None |
+| `--dry-run` | Show the planned recordings without running ffmpeg | - |
+| `--verbose` | Show verbose logs | - |
+| `--poll-interval` | Interval in seconds for re-fetching the schedule | `900` |
 
-### 例
+### Example
 
-次回放送予定の「ベストオブクラシック」（シリーズID: `Z9L1V2M24L`）を東京エリアのFMで録音し、開始60秒前から終了後3分まで保存する例:
+The following command records the next broadcast of "Best of Classic" (series ID `Z9L1V2M24L`) in the Tokyo FM area, starting 60 seconds early and continuing for 3 minutes after the scheduled end time:
 
 ```
 python -m radio_downloader Z9L1V2M24L --area tokyo --lead-in 60 --tail-out 180
 ```
 
-録音ファイルは `recordings` ディレクトリに `YYYYMMDDTHHMMSSZ_タイトル.m4a` 形式で保存されます。`--dry-run` を付けるとffmpegは起動せず計画のみを表示します。スケジューラは既定で15分ごとに放送予定を再取得し、新しい番組が見つかれば自動的に予約へ追加します。
+Recordings are saved in the `recordings` directory with filenames in the format `YYYYMMDDTHHMMSSZ_<title>.m4a`. When the `--dry-run` option is used the tool only prints the planned recordings instead of launching ffmpeg. By default the scheduler refreshes the broadcast schedule every 15 minutes and automatically adds newly found programs to the queue.
