@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 import aiohttp
@@ -69,7 +69,8 @@ async def fetch_broadcast_events(
 ) -> List[BroadcastEvent]:
     """Fetch scheduled broadcast events for the provided series identifier."""
 
-    url = f"{_EVENT_API_TEMPLATE}/{series_id}.json"
+    query_to = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M")
+    url = f"{_EVENT_API_TEMPLATE}/{series_id}.json?to={query_to}&status=scheduled"
     payload = await _json_request(session, url)
 
     events: List[BroadcastEvent] = []
