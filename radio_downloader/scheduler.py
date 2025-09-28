@@ -7,7 +7,7 @@ import shlex
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, Iterable, List, Optional, Set
 
 import aiohttp
 
@@ -22,6 +22,7 @@ LOGGER = logging.getLogger(__name__)
 class RecordingPlan:
     """Plan describing how to record a broadcast."""
 
+    series_id: str
     event: BroadcastEvent
     stream_catalog: StreamCatalog
     output_path: Path
@@ -221,6 +222,7 @@ async def prepare_plans(
             continue
         output_path = build_output_path(output_dir, event)
         plan = RecordingPlan(
+            series_id=series_id,
             event=event,
             stream_catalog=catalog,
             output_path=output_path,
@@ -235,7 +237,7 @@ async def prepare_plans(
 
 
 async def run_scheduler(
-    series_id: str,
+    series_id: Iterable[str] | str,
     area: str,
     output_dir: Path,
     lead_in_seconds: int,
@@ -248,9 +250,17 @@ async def run_scheduler(
     dry_run: bool,
     poll_interval_seconds: int = 900,
 ) -> None:
+    if isinstance(series_id, str):
+        series_list = [series_id.strip()]
+    else:
+        series_list = [value.strip() for value in series_id if value and value.strip()]
+
+    if not series_list:
+        raise ValueError("At least one series identifier must be provided")
+
     LOGGER.debug(
-        "run_scheduler called with series_id=%s area=%s output_dir=%s lead_in=%ss tail_out=%ss default_duration_minutes=%s max_events=%s earliest_start=%s dry_run=%s",
-        series_id,
+        "run_scheduler called with series_ids=%s area=%s output_dir=%s lead_in=%ss tail_out=%ss default_duration_minutes=%s max_events=%s earliest_start=%s dry_run=%s",
+        series_list,
         area,
         output_dir,
         lead_in_seconds,
@@ -273,63 +283,74 @@ async def run_scheduler(
     output_dir = output_dir.expanduser()
 
     poll_interval = max(poll_interval_seconds, 0)
-    scheduled_event_ids: Set[str] = set()
+    scheduled_event_ids: Dict[str, Set[str]] = {sid: set() for sid in series_list}
     active_tasks: Dict[asyncio.Task, RecordingPlan] = {}
 
-    warned_no_events = False
+    warned_no_events: Set[str] = set()
 
     async with aiohttp.ClientSession() as session:
         try:
             while True:
-                plans = await prepare_plans(
-                    session=session,
-                    series_id=series_id,
-                    area_key=area,
-                    output_dir=output_dir,
-                    lead_in=lead_in,
-                    tail_out=tail_out,
-                    default_duration=default_duration,
-                    max_events=max_events,
-                    earliest_start=earliest_start,
-                )
-
-                new_plans: List[RecordingPlan] = []
-                for plan in plans:
-                    event_id = plan.event.broadcast_event_id
-                    if event_id in scheduled_event_ids:
-                        LOGGER.debug(
-                            "Event '%s' already scheduled, skipping",
-                            plan.event.title,
-                        )
-                        continue
-                    scheduled_event_ids.add(event_id)
-                    new_plans.append(plan)
-
-                if new_plans:
-                    warned_no_events = False
-                    LOGGER.info("Prepared %d new recording plan(s)", len(new_plans))
-                    for plan in new_plans:
-                        LOGGER.info(
-                            "Event '%s' scheduled at %s",
-                            plan.event.title,
-                            plan.start_time.isoformat(),
-                        )
-                        task = asyncio.create_task(
-                            execute_recording(
-                                plan,
-                                ffmpeg_path=ffmpeg_path,
-                                log_level=ffmpeg_log_level,
-                                dry_run=dry_run,
-                            )
-                        )
-                        active_tasks[task] = plan
-                elif not active_tasks and not warned_no_events:
-                    LOGGER.warning(
-                        "No future events found for series %s in area %s",
-                        series_id,
-                        area,
+                for current_series in series_list:
+                    plans = await prepare_plans(
+                        session=session,
+                        series_id=current_series,
+                        area_key=area,
+                        output_dir=output_dir,
+                        lead_in=lead_in,
+                        tail_out=tail_out,
+                        default_duration=default_duration,
+                        max_events=max_events,
+                        earliest_start=earliest_start,
                     )
-                    warned_no_events = True
+
+                    new_plans: List[RecordingPlan] = []
+                    scheduled_ids = scheduled_event_ids[current_series]
+                    for plan in plans:
+                        event_id = plan.event.broadcast_event_id
+                        if event_id in scheduled_ids:
+                            LOGGER.debug(
+                                "Event '%s' already scheduled for series '%s', skipping",
+                                plan.event.title,
+                                current_series,
+                            )
+                            continue
+                        scheduled_ids.add(event_id)
+                        new_plans.append(plan)
+
+                    if new_plans:
+                        warned_no_events.discard(current_series)
+                        LOGGER.info(
+                            "Prepared %d new recording plan(s) for series %s",
+                            len(new_plans),
+                            current_series,
+                        )
+                        for plan in new_plans:
+                            LOGGER.info(
+                                "Event '%s' scheduled at %s",
+                                plan.event.title,
+                                plan.start_time.isoformat(),
+                            )
+                            task = asyncio.create_task(
+                                execute_recording(
+                                    plan,
+                                    ffmpeg_path=ffmpeg_path,
+                                    log_level=ffmpeg_log_level,
+                                    dry_run=dry_run,
+                                )
+                            )
+                            active_tasks[task] = plan
+                    else:
+                        has_active_for_series = any(
+                            plan.series_id == current_series for plan in active_tasks.values()
+                        )
+                        if not has_active_for_series and current_series not in warned_no_events:
+                            LOGGER.warning(
+                                "No future events found for series %s in area %s",
+                                current_series,
+                                area,
+                            )
+                            warned_no_events.add(current_series)
 
                 # Remove any tasks that completed without going through asyncio.wait
                 for task in list(active_tasks):
@@ -350,7 +371,7 @@ async def run_scheduler(
                             )
 
                 if active_tasks:
-                    warned_no_events = False
+                    warned_no_events.clear()
                     done, _ = await asyncio.wait(
                         tuple(active_tasks.keys()),
                         timeout=poll_interval,

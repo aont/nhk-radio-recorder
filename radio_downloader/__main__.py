@@ -13,7 +13,11 @@ from .scheduler import run_scheduler
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Schedule NHK radio recordings via ffmpeg.")
-    parser.add_argument("series_id", help="NHK radio series identifier (e.g. Z9L1V2M24L)")
+    parser.add_argument(
+        "series_id",
+        nargs="+",
+        help="NHK radio series identifier(s) (e.g. Z9L1V2M24L)",
+    )
     parser.add_argument(
         "--area",
         default="130",
