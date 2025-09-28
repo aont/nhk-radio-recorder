@@ -1,4 +1,5 @@
 # radio-downloader
+[English documentation is available here.](README.en.md)
 
 NHKのラジオ番組をHLSストリームからffmpegで保存するための非同期ツールです。番組の放送予定をNHKの公開APIから取得し、指定した番組シリーズの放送開始時刻に合わせてffmpegの実行を予約します。
 
