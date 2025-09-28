@@ -12,7 +12,7 @@ This repository provides an asyncio-based scheduler that records NHK radio progr
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.9+
 - `ffmpeg` available on the system path
 
 ## Setup

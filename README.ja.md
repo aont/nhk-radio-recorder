@@ -14,7 +14,7 @@ English documentation is available in [README.en.md](README.en.md).
 
 ## 必要環境
 
-- Python 3.10 以上
+- Python 3.9 以上
 - `ffmpeg` コマンドが利用可能であること
 
 ## セットアップ

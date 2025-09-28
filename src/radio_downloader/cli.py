@@ -6,7 +6,7 @@ import argparse
 import asyncio
 import datetime as _datetime
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import aiohttp
 
@@ -215,7 +215,7 @@ async def run_async(args: argparse.Namespace) -> None:
             await _schedule_new_events()
 
 
-def main(argv: List[str] | None = None) -> None:
+def main(argv: Optional[List[str]] = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
 
