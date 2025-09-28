@@ -195,7 +195,7 @@ async def fetch_events(session: aiohttp.ClientSession, url: str) -> List[NHKEven
             return []
         snippet = json.dumps(payload, ensure_ascii=False)[:500]
         raise RuntimeError(
-            "放送予定JSONからイベントを抽出できませんでした: "
-            f"{url}\npayload一部: {snippet} ..."
+            "Failed to extract events from the broadcast schedule JSON: "
+            f"{url}\npayload snippet: {snippet} ..."
         )
     return events

@@ -26,7 +26,7 @@ async def record_one(
     stop_at = event.end + dt.timedelta(seconds=max(0, postpad))
     now = dt.datetime.now(tz=event.start.tzinfo)
     if stop_at <= now:
-        print(f"[SKIP] {event.title} は終了済み: stop {stop_at.isoformat()}")
+        print(f"[SKIP] {event.title} has already finished: stop {stop_at.isoformat()}")
         return
 
     stamp = event.start.astimezone(JP_TZ).strftime("%Y%m%d_%H%M")
@@ -34,18 +34,18 @@ async def record_one(
     out = outdir / f"{base}.m4a"
 
     if start_at > now:
-        print(f"[WAIT] {event.title} → {start_at.isoformat()} に開始（HLS: {hls_url}）")
+        print(f"[WAIT] {event.title} will start at {start_at.isoformat()} (HLS: {hls_url})")
         await sleep_until(start_at)
     else:
         print(
-            "[LATE START] すでに開始時刻を過ぎています。即時開始。 "
+            "[LATE START] The scheduled start time has already passed. Starting now. "
             f"{now.isoformat()} > {start_at.isoformat()}"
         )
 
     now2 = dt.datetime.now(tz=event.start.tzinfo)
     duration = int((stop_at - now2).total_seconds())
     if duration <= 0:
-        print(f"[SKIP] 録音時間が0秒以下: {event.title}")
+        print(f"[SKIP] Recording duration is zero or negative: {event.title}")
         return
 
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -64,7 +64,9 @@ async def record_one(
         print(f"[DONE] {out}")
         return
 
-    print(f"[RETRY] copy保存に失敗したため、libmp3lameで再エンコードします (rc={rc})")
+    print(
+        f"[RETRY] Copy-to-M4A failed; retrying with libmp3lame re-encode (rc={rc})"
+    )
     cmd2 = build_ffmpeg_cmd(
         ffmpeg_path,
         hls_url,
@@ -78,4 +80,4 @@ async def record_one(
     if rc2 == 0:
         print(f"[DONE] {out.with_suffix('.mp3')}")
     else:
-        print(f"[FAIL] ffmpeg失敗 rc={rc2}")
+        print(f"[FAIL] ffmpeg failed rc={rc2}")

@@ -16,49 +16,64 @@ from .recorder import record_one
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="NHKラジオ HLS 録音予約 (asyncio + ffmpeg)")
+    parser = argparse.ArgumentParser(
+        description="NHK Radio HLS recording scheduler (asyncio + ffmpeg)"
+    )
     parser.add_argument(
         "--event-url",
         action="extend",
         nargs="+",
         default=[],
-        help="放送予定（BroadcastEvent）JSONのURL。スペース区切りで複数指定可。",
+        help="BroadcastEvent JSON URL(s). Provide multiple values separated by spaces.",
     )
     parser.add_argument(
         "--series-id",
         action="extend",
         nargs="+",
         default=[],
-        help="シリーズID（例: Z9L1V2M24L）。スペース区切りで複数指定可。",
+        help="Series ID (e.g. Z9L1V2M24L). Provide multiple values separated by spaces.",
     )
     parser.add_argument(
         "--area",
         default="tokyo",
-        help="地域（config_web.xml の <area> 値。例: tokyo/osaka など）",
+        help="Area (the <area> value from config_web.xml, e.g. tokyo/osaka).",
     )
     parser.add_argument(
         "--service",
         default=None,
         choices=["r1", "r2", "fm"],
-        help="サービス（r1/r2/fm）。JSONから判別できない場合に使用。",
+        help="Service (r1/r2/fm). Use when the JSON does not specify it.",
     )
     parser.add_argument(
         "--variant",
         default="master",
         choices=["auto", "master", "master48k"],
-        help="HLSプレイリストのバリアント選択。既定は master（そのまま）。",
+        help="HLS playlist variant. Defaults to master.",
     )
-    parser.add_argument("--outdir", default="./recordings", help="保存ディレクトリ")
-    parser.add_argument("--ffmpeg", default="ffmpeg", help="ffmpeg 実行ファイルのパス")
-    parser.add_argument("--prepad", type=int, default=5, help="開始前の余裕秒")
-    parser.add_argument("--postpad", type=int, default=30, help="終了後の余裕秒")
-    parser.add_argument("--loglevel", default="error", help="ffmpeg の -loglevel（例: error, warning, info）")
-    parser.add_argument("--dry-run", action="store_true", help="録音せず予約内容を表示")
+    parser.add_argument("--outdir", default="./recordings", help="Output directory.")
+    parser.add_argument("--ffmpeg", default="ffmpeg", help="Path to the ffmpeg executable.")
+    parser.add_argument("--prepad", type=int, default=5, help="Seconds to start recording before the event.")
+    parser.add_argument(
+        "--postpad",
+        type=int,
+        default=30,
+        help="Seconds to continue recording after the event ends.",
+    )
+    parser.add_argument(
+        "--loglevel",
+        default="error",
+        help="ffmpeg -loglevel value (e.g. error, warning, info).",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show the scheduled recordings without invoking ffmpeg.",
+    )
     parser.add_argument(
         "--refresh-sec",
         type=int,
         default=300,
-        help="放送予定JSONを再取得する間隔（秒）。0以下で無効化。",
+        help="Interval (seconds) to refresh broadcast schedules. Disabled when <= 0.",
     )
     return parser
 
@@ -71,7 +86,7 @@ async def run_async(args: argparse.Namespace) -> None:
 
         if args.area not in area_map:
             raise SystemExit(
-                "config_web.xml に area='{}' が見つかりません。利用可能: {}".format(
+                "area='{}' was not found in config_web.xml. Available areas: {}".format(
                     args.area, ", ".join(sorted(area_map.keys()))
                 )
             )
@@ -80,7 +95,7 @@ async def run_async(args: argparse.Namespace) -> None:
         series_ids = list(args.series_id)
 
         if not manual_event_urls and not series_ids:
-            raise SystemExit("--event-url か --series-id のいずれかを指定してください。")
+            raise SystemExit("Specify either --event-url or --series-id.")
 
         scheduled_keys: set[str] = set()
         tasks: set[asyncio.Task[None]] = set()
@@ -90,7 +105,7 @@ async def run_async(args: argparse.Namespace) -> None:
             try:
                 task.result()
             except Exception as exc:  # pragma: no cover - logging only
-                print(f"[ERROR] 録音タスクで例外が発生しました: {exc}")
+                print(f"[ERROR] Recording task raised an exception: {exc}")
 
         def _build_event_urls() -> List[str]:
             urls = list(manual_event_urls)
@@ -108,7 +123,7 @@ async def run_async(args: argparse.Namespace) -> None:
                 try:
                     events = await fetch_events(session, url)
                 except Exception as exc:
-                    print(f"[WARN] 放送予定の取得に失敗しました ({url}): {exc}")
+                    print(f"[WARN] Failed to fetch broadcast schedule ({url}): {exc}")
                     continue
 
                 for event in events:
@@ -133,13 +148,13 @@ async def run_async(args: argparse.Namespace) -> None:
                         elif svc_map:
                             available = ", ".join(sorted(svc_map.keys()))
                             raise SystemExit(
-                                f"area='{area}' に service='{service}' が見つかりません（利用可能: {available}）。"
+                                f"service='{service}' not found for area='{area}' (available: {available})."
                             )
 
                     hls = area_map.get(area, {}).get(service)
                     if not hls:
                         raise SystemExit(
-                            f"HLS URL が取得できませんでした: area={area}, service={service}"
+                            f"Failed to resolve HLS URL: area={area}, service={service}"
                         )
 
                     hls = pick_variant(hls, args.variant)
@@ -185,12 +200,12 @@ async def run_async(args: argparse.Namespace) -> None:
             return
 
         if added_initial == 0:
-            print("録音タスクが見つかりませんでした。新しい放送予定を監視します。")
+            print("No recording tasks were scheduled. Monitoring for new broadcasts.")
 
         refresh = max(0, args.refresh_sec)
 
         if refresh <= 0:
-            # 追加取得を行わず、現在のタスクのみ待機
+            # Wait for the current tasks without fetching new schedules
             if tasks:
                 await asyncio.gather(*tasks)
             return

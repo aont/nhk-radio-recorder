@@ -2,6 +2,8 @@
 
 NHKラジオの放送予定JSONとHLSストリームを利用して、ffmpegで自動録音するためのスクリプトです。asyncioと`aiohttp`を用いて非同期で複数番組を予約できます。
 
+English documentation is available in [README.en.md](README.en.md).
+
 ## 主な特徴
 
 - NHKが公開している`config_web.xml`からエリアごとのHLS URLを自動取得

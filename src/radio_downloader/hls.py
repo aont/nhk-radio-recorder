@@ -41,7 +41,7 @@ async def fetch_hls_map(session: aiohttp.ClientSession) -> Dict[str, Dict[str, s
 
     if not area_to_service:
         raise RuntimeError(
-            "config_web.xml の解析に失敗しました。NHK側の仕様変更の可能性があります。"
+            "Failed to parse config_web.xml. NHK may have changed the format."
         )
 
     return area_to_service
