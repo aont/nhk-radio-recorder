@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import datetime as _datetime
 from pathlib import Path
 from typing import List
 
@@ -19,8 +20,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--event-url",
         action="append",
-        required=True,
+        default=[],
         help="放送予定（BroadcastEvent）JSONのURL。複数指定可。",
+    )
+    parser.add_argument(
+        "--series-id",
+        action="append",
+        default=[],
+        help="シリーズID（例: Z9L1V2M24L）。対応する放送予定JSONを自動取得。",
     )
     parser.add_argument(
         "--area",
@@ -63,7 +70,18 @@ async def run_async(args: argparse.Namespace) -> None:
 
         tasks: List[asyncio.Task] = []
 
-        for url in args.event_url:
+        event_urls = list(args.event_url)
+
+        for series_id in args.series_id:
+            dt_now = _datetime.datetime.now()
+            query_to = (dt_now + _datetime.timedelta(days=1.0)).strftime("%Y-%m-%dT%H:%M")
+            base_url = f"https://api.nhk.jp/r7/f/broadcastevent/rs/{series_id}.json"
+            event_urls.append(f"{base_url}?to={query_to}&status=scheduled")
+
+        if not event_urls:
+            raise SystemExit("--event-url か --series-id のいずれかを指定してください。")
+
+        for url in event_urls:
             events = await fetch_events(session, url)
 
             for event in events:
