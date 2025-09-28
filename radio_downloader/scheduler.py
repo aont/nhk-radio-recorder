@@ -154,17 +154,24 @@ async def prepare_plans(
     max_events: Optional[int] = None,
     earliest_start: Optional[datetime] = None,
 ) -> List[RecordingPlan]:
+    LOGGER.debug("Fetching broadcast events for series '%s'", series_id)
     events = await fetch_broadcast_events(session, series_id)
+    LOGGER.debug("Fetched %d events for series '%s'", len(events), series_id)
+
+    LOGGER.debug("Fetching stream catalog for available areas")
     catalogs = await fetch_stream_catalog(session)
+    LOGGER.debug("Stream catalog contains %d area entries", len(catalogs))
 
     keys = [area_key]
     lowered = area_key.lower()
     if lowered not in keys:
         keys.append(lowered)
+    LOGGER.debug("Looking up stream catalog for area '%s'", area_key)
     catalog = None
     for key in keys:
         catalog = catalogs.get(key)
         if catalog is not None:
+            LOGGER.debug("Found catalog for key '%s'", key)
             break
     if catalog is None:
         raise ValueError(f"Area '{area_key}' not found in NHK stream catalog")
@@ -175,13 +182,42 @@ async def prepare_plans(
     if catalog.area_slug:
         accepted_area_ids.add(catalog.area_slug.strip().lower())
 
+    LOGGER.debug(
+        "Accepted area identifiers for catalog: %s",
+        sorted(accepted_area_ids),
+    )
+
     for event in events:
+        LOGGER.debug(
+            "Evaluating event '%s' (%s-%s) area_id=%s",
+            event.title,
+            event.start.isoformat(),
+            event.end.isoformat() if event.end else "?",
+            event.area_id,
+        )
         event_area_id = event.area_id.strip().lower()
         if event_area_id not in accepted_area_ids:
+            LOGGER.debug(
+                "Skipping event '%s' due to unmatched area_id '%s'",
+                event.title,
+                event.area_id,
+            )
             continue
         if earliest_start and event.start < earliest_start:
+            LOGGER.debug(
+                "Skipping event '%s' because start %s is before earliest_start %s",
+                event.title,
+                event.start.isoformat(),
+                earliest_start.isoformat(),
+            )
             continue
         if event.start < now:
+            LOGGER.debug(
+                "Skipping event '%s' because start %s is in the past (now=%s)",
+                event.title,
+                event.start.isoformat(),
+                now.isoformat(),
+            )
             continue
         output_path = build_output_path(output_dir, event)
         plan = RecordingPlan(
@@ -227,6 +263,19 @@ async def run_scheduler(
     ffmpeg_log_level: str,
     dry_run: bool,
 ) -> None:
+    LOGGER.debug(
+        "run_scheduler called with series_id=%s area=%s output_dir=%s lead_in=%ss tail_out=%ss default_duration_minutes=%s max_events=%s earliest_start=%s dry_run=%s",
+        series_id,
+        area,
+        output_dir,
+        lead_in_seconds,
+        tail_out_seconds,
+        default_duration_minutes,
+        max_events,
+        earliest_start.isoformat() if earliest_start else None,
+        dry_run,
+    )
+
     area = area.strip()
     lead_in = timedelta(seconds=max(lead_in_seconds, 0))
     tail_out = timedelta(seconds=max(tail_out_seconds, 0))
