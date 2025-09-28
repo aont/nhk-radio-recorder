@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Iterable, List
+from typing import Any, Iterable, List, Optional
 
 import aiohttp
 
@@ -64,6 +64,49 @@ def _walk(obj: Any):
             yield from _walk(item)
 
 
+def _normalize_service(value: Any) -> Optional[str]:
+    """Convert loosely formatted service identifiers into ``r1``/``r2``/``fm``."""
+
+    if isinstance(value, dict):
+        for key in ("id", "name", "serviceId", "service", "channel"):
+            if key in value:
+                normalized = _normalize_service(value[key])
+                if normalized:
+                    return normalized
+        return None
+
+    if isinstance(value, str):
+        lower = value.lower()
+        if "r1" in lower:
+            return "r1"
+        if "r2" in lower or "rs" in lower:
+            return "r2"
+        if "fm" in lower or "r3" in lower:
+            return "fm"
+    return None
+
+
+def _extract_service(candidate: Any) -> Optional[str]:
+    """Search ``candidate`` recursively for a recognizable service identifier."""
+
+    if isinstance(candidate, dict):
+        for key in SERVICE_KEYS:
+            if key in candidate:
+                normalized = _normalize_service(candidate[key])
+                if normalized:
+                    return normalized
+        for value in candidate.values():
+            found = _extract_service(value)
+            if found:
+                return found
+    elif isinstance(candidate, list):
+        for item in candidate:
+            found = _extract_service(item)
+            if found:
+                return found
+    return None
+
+
 def extract_events_from_json(payload: Any) -> List[NHKEvent]:
     """Extract :class:`NHKEvent` objects from an arbitrary JSON payload."""
 
@@ -82,21 +125,7 @@ def extract_events_from_json(payload: Any) -> List[NHKEvent]:
 
         title = any_key(candidate, TITLE_KEYS) or "NHK Radio"
 
-        service = any_key(candidate, SERVICE_KEYS)
-        if isinstance(service, dict):
-            service = service.get("id") or service.get("name")
-        if isinstance(service, str):
-            lower = service.lower()
-            if "r1" in lower:
-                service = "r1"
-            elif "r2" in lower or "rs" in lower:
-                service = "r2"
-            elif "fm" in lower:
-                service = "fm"
-            else:
-                service = None
-        else:
-            service = None
+        service = _extract_service(candidate)
 
         area = any_key(candidate, AREA_KEYS)
         if isinstance(area, dict):
