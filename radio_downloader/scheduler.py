@@ -7,7 +7,7 @@ import shlex
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Set
+from typing import Dict, Iterable, List, Optional, Set, Union
 
 import aiohttp
 
@@ -237,7 +237,7 @@ async def prepare_plans(
 
 
 async def run_scheduler(
-    series_id: Iterable[str] | str,
+    series_id: Union[Iterable[str], str],
     area: str,
     output_dir: Path,
     lead_in_seconds: int,
