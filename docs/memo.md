@@ -1,62 +1,63 @@
-`asyncio`で動く「NHKラジオのHLSをffmpegで録音予約する」ツールのメモです。放送予定（BroadcastEvent）JSONから番組情報を取得し、`config_web.xml`に記載されたHLSプレイリストを利用してffmpegで保存します。
+# Notes for the NHK radio downloader (asyncio + ffmpeg)
+
+This memo documents the asyncio-based tool that reserves NHK radio recordings by combining BroadcastEvent JSON schedules with `ffmpeg`. It fetches programme information from the broadcast schedule API and resolves the HLS playlists listed in `config_web.xml`.
 
 ---
 
-## ざっくり仕様
+## Specification overview
 
-* 入力：
-  * **放送予定JSONのURL**（例：`https://api.nhk.jp/r7/f/broadcastevent/rs/Z9L1V2M24L.json`）
-    → JSONから `start` / `end`（始終時刻）、タイトル等を抽出
-  * **地域（area）**と**サービス（r1 / r2 / fm）**はJSONから推測できなければCLIで指定可能（デフォルトは `tokyo` & `r2`）
-* HLS URL：
-  * `https://www.nhk.or.jp/radio/config/config_web.xml` を取得して、各地域の `r1hls` / `r2hls` / `fmhls` を解析して使用。最近は `radio-stream.nhk.jp/.../master.m3u8` のマスタープレイリストが配布されています。必要なら `master48k.m3u8` に差し替え可能。([Zenn][1])
-* スケジューリング：
-  * `python-sleep-absolute` の `wait_until()` で**絶対時刻**まで非ブロッキング待機（Linux/Windows対応、他OSはフォールバックで`asyncio.sleep`）。([GitHub][2])
-* 録音：
-  * `ffmpeg` を `-c copy` で**無再エンコード**保存（`.m4a`）、必要に応じて `-bsf:a aac_adtstoasc` を付与。HLS録音に関するオプション例は技評記事が参考になります。([gihyo.jp][3])
-* 複数イベントがJSONに含まれていれば全部並列予約（`asyncio`タスク）
-* ネットワーク瞬断に備えて `-reconnect` 系オプションを付与
-* `--prepad / --postpad` で前後余裕秒を加算
-* `--dry-run` で予約内容だけ確認
+* Inputs:
+  * **Broadcast schedule JSON URL** (for example `https://api.nhk.jp/r7/f/broadcastevent/rs/Z9L1V2M24L.json`). The script extracts `start` / `end` timestamps and metadata from the payload.
+  * **Area** and **service** (`r1` / `r2` / `fm`) can be overridden on the CLI when they cannot be inferred from the JSON (defaults: `tokyo` & `r2`).
+* HLS URL resolution:
+  * Fetch `https://www.nhk.or.jp/radio/config/config_web.xml` and parse the `r1hls` / `r2hls` / `fmhls` entries per area. Recently NHK has been distributing master playlists such as `radio-stream.nhk.jp/.../master.m3u8`; switching to `master48k.m3u8` is possible if required. ([Zenn][1])
+* Scheduling:
+  * Use `wait_until()` from `python-sleep-absolute` for precise absolute sleeps (non-blocking on Linux/Windows; falls back to `asyncio.sleep` elsewhere). ([GitHub][2])
+* Recording:
+  * Invoke `ffmpeg` with `-c copy` to store `.m4a` without re-encoding. Add `-bsf:a aac_adtstoasc` if necessary. See the gihyo.jp article for additional HLS recording tips. ([gihyo.jp][3])
+* When the JSON contains multiple events the script schedules all of them concurrently with asyncio tasks.
+* Apply `-reconnect` options to mitigate short network interruptions.
+* `--prepad` / `--postpad` add margins before and after the broadcast window.
+* `--dry-run` prints the planned recordings without launching `ffmpeg`.
 
-> **注意**：録音した音声の権利はNHKにあります。**私的複製の範囲内**でご利用ください。([Zenn][1])
+> **Notice**: Recorded audio remains the property of NHK. Use the tool only within the scope of private copying. ([Zenn][1])
 
 ---
 
-## 使い方メモ
+## Usage notes
 
 ```bash
-# 依存パッケージを入れる（Python 3.11+ 推奨）
+# Install dependencies (Python 3.11+ recommended)
 pip install -r requirements.txt
 
-# 例: 放送予定JSON URLを指定して、東京のR2を録音
+# Example: record the Tokyo R2 stream using a broadcast schedule JSON URL
 python main.py \
   --event-url "https://api.nhk.jp/r7/f/broadcastevent/rs/Z9L1V2M24L.json" \
   --area tokyo --service r2 \
   --outdir ./recordings --postpad 30 --prepad 5
 
-# 予約内容だけ確認
+# Preview only (no recording)
 python main.py \
   --event-url "..." --area tokyo --service r2 --dry-run
 ```
 
-> 地域・サービスは放送予定JSONから判別できなかったときの**上書き用**です。
-> HLSは `config_web.xml` から実際のURLを引きます（例：`.../nhkradiruakr2/master.m3u8`）。([Zenn][1])
+> Area/service options override the JSON when they cannot be resolved automatically.
+> Actual HLS URLs are taken from `config_web.xml` (for example `.../nhkradiruakr2/master.m3u8`). ([Zenn][1])
 
 ---
 
-## 実装ノート
+## Implementation notes
 
-現在は `src/radio_downloader/` 以下でモジュールごとに分割し、`main.py` からCLIを呼び出す構成にしています。主な役割は以下の通りです。
+The codebase lives under `src/radio_downloader/`, split into modules that `main.py` wires together:
 
-- `cli.py`: 引数解析と全体のフロー制御
-- `events.py`: 放送予定JSONの解析
-- `hls.py`: config_web.xmlの取得とHLS URL解決
-- `recorder.py`: 録音タスク本体
-- `ffmpeg.py`: ffmpegコマンドの組み立てと実行
-- `timing.py`: 絶対時刻スリープのラッパー
+- `cli.py`: CLI parsing and orchestration
+- `events.py`: Broadcast schedule parsing
+- `hls.py`: Fetch `config_web.xml` and resolve HLS URLs
+- `recorder.py`: Recording task implementation
+- `ffmpeg.py`: Build and execute `ffmpeg` commands
+- `timing.py`: Abstractions for absolute-time sleeping
 
-元のワンファイル実装からの移植時に、主要な関数は役割ごとのモジュールへ移動させています。挙動は従来と同じになるように調整済みです。
+The migration from the original single-file script moved core functions into dedicated modules while preserving behaviour.
 
 [1]: https://zenn.dev/articles/nhk-radio-hls
 [2]: https://github.com/aont/python-sleep-absolute

@@ -1,37 +1,39 @@
 # radio-downloader
 
-NHKラジオの放送予定JSONとHLSストリームを利用して、ffmpegで自動録音するためのスクリプトです。asyncioと`aiohttp`を用いて非同期で複数番組を予約できます。
+This repository provides an asyncio-based scheduler that records NHK radio programmes by combining broadcast schedule JSON feeds with the HLS streams served by NHK. It orchestrates `ffmpeg` to capture shows automatically and can manage multiple reservations concurrently.
 
-English documentation is available in [README.en.md](README.en.md).
+## Key features
 
-## 主な特徴
+- Automatically resolves per-area HLS master playlists from `config_web.xml`.
+- Parses BroadcastEvent JSON documents flexibly to extract start/end timestamps and metadata.
+- Falls back to MP3 re-encoding when a direct AAC copy fails.
+- Supports `--dry-run` mode to inspect the reservation plan without invoking `ffmpeg`.
+- Periodically refreshes schedules and schedules newly discovered programmes.
 
-- NHKが公開している`config_web.xml`からエリアごとのHLS URLを自動取得
-- 放送予定（BroadcastEvent）JSONを柔軟に解析し、番組情報を抽出
-- 録音失敗時は自動的にMP3へフォールバックエンコード
-- `--dry-run`で予約内容だけを確認可能
-- 定期的に放送予定を再取得し、新しい番組があれば自動的に録音予約へ追加
+## Requirements
 
-## 必要環境
+- Python 3.10+
+- `ffmpeg` available on the system path
 
-- Python 3.10 以上
-- `ffmpeg` コマンドが利用可能であること
-
-## セットアップ
+## Setup
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # Windowsでは .venv\Scripts\activate
+source .venv/bin/activate  # On Windows use .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-`sleep-absolute` パッケージは対応環境での高精度スリープを提供しますが、未インストールでも動作します。
+`sleep-absolute` enables high precision absolute-time sleeping where supported, but the tool also works without it.
 
-Windowsなどで IANA タイムゾーンデータベースが同梱されていない環境では、必要に応じて
-`pip install tzdata` を実行してください。インストールしなくても UTC+09:00 (日本標準時)
-で動作しますが、将来の祝日対応などのために導入を推奨します。
+Windows environments that lack the IANA time zone database may need:
 
-## 使い方
+```bash
+pip install tzdata
+```
+
+The recorder still works in JST without `tzdata`, but installing it improves future compatibility.
+
+## Usage
 
 ```bash
 python main.py \
@@ -41,26 +43,28 @@ python main.py \
   --outdir ./recordings
 ```
 
-主なオプション:
+Notable options:
 
-- `--event-url` (スペース区切りで複数可): 放送予定JSONのURL。
-- `--area`: config_web.xmlの`<area>`値。例: `tokyo`, `osaka`。
-- `--service`: `r1`, `r2`, `fm` のいずれか。JSONから判別できない場合に指定。
-- `--variant`: `auto`, `master`, `master48k`のいずれか。HLSプレイリストのバリアント選択。
-- `--refresh-sec`: 放送予定JSONを定期的に再取得する間隔（秒）。既定は 300 秒。
-- `--dry-run`: 録音せず予約内容のみ表示。
+- `--event-url`: BroadcastEvent JSON URL(s). Provide multiple values separated by spaces.
+- `--area`: `<area>` value from `config_web.xml` (for example `tokyo`, `osaka`).
+- `--service`: One of `r1`, `r2`, `fm`. Use when the JSON does not specify the service.
+- `--variant`: Select the HLS variant (`auto`, `master`, `master48k`).
+- `--refresh-sec`: Interval in seconds to refresh schedules (default `300`). Use `0` or a negative value to disable refreshing.
+- `--dry-run`: Show the planned recordings without running `ffmpeg`.
 
-詳細は `python main.py --help` で確認できます。
+Run `python main.py --help` for the full CLI reference.
 
-## ディレクトリ構成
+## Project layout
 
 ```
 .
 ├── README.md
+├── README.en.md
 ├── requirements.txt
 ├── main.py
 ├── docs/
-│   └── memo.md
+│   ├── memo.md
+│   └── memo_en.md
 └── src/
     └── radio_downloader/
         ├── __init__.py
@@ -73,6 +77,6 @@ python main.py \
         └── timing.py
 ```
 
-## 開発メモ
+## Further reading
 
-補足資料やアイデアは `docs/memo.md` にまとめています。
+Additional implementation notes are collected in [`docs/memo.md`](docs/memo.md) (Japanese) and [`docs/memo_en.md`](docs/memo_en.md) (English).
