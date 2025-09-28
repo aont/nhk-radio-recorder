@@ -171,8 +171,13 @@ async def prepare_plans(
 
     now = datetime.now(tz=timezone.utc)
     plans: List[RecordingPlan] = []
+    accepted_area_ids = {catalog.area_key.strip().lower()}
+    if catalog.area_slug:
+        accepted_area_ids.add(catalog.area_slug.strip().lower())
+
     for event in events:
-        if event.area_id != catalog.area_key:
+        event_area_id = event.area_id.strip().lower()
+        if event_area_id not in accepted_area_ids:
             continue
         if earliest_start and event.start < earliest_start:
             continue
