@@ -55,6 +55,22 @@ def test_prepare_plans_accepts_area_slug(monkeypatch, tmp_path):
     assert plans[0].stream_catalog == catalog
 
 
+def test_build_output_path_uses_date_and_title(tmp_path):
+    event = BroadcastEvent(
+        broadcast_event_id="event-1",
+        title="Sample Program",
+        description=None,
+        start=datetime(2030, 1, 2, 15, 30, tzinfo=timezone.utc),
+        end=datetime(2030, 1, 2, 16, 30, tzinfo=timezone.utc),
+        service_id="r1",
+        area_id="tokyo",
+    )
+
+    output_path = scheduler.build_output_path(tmp_path, event)
+
+    assert output_path.name == "20300102_Sample Program.m4a"
+
+
 def test_run_scheduler_polls_for_additional_events(monkeypatch, tmp_path):
     now = datetime.now(timezone.utc)
     event1 = BroadcastEvent(

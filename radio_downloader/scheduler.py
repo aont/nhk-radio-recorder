@@ -73,9 +73,12 @@ def sanitize_filename(value: str) -> str:
 
 
 def build_output_path(base_dir: Path, event: BroadcastEvent, extension: str = ".m4a") -> Path:
-    timestamp = event.start.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    start = event.start
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    date_str = start.strftime("%Y%m%d")
     title = sanitize_filename(event.title or event.broadcast_event_id)
-    filename = f"{timestamp}_{title}{extension}"
+    filename = f"{date_str}_{title}{extension}"
     return base_dir / filename
 
 
