@@ -51,6 +51,50 @@ class RecordingPlan:
     def record_duration(self) -> timedelta:
         return self.stop_time - self.start_time
 
+    @staticmethod
+    def _clean_metadata_value(value: Optional[str]) -> Optional[str]:
+        if not value:
+            return None
+        stripped = value.strip()
+        return stripped or None
+
+    @property
+    def metadata_tags(self) -> Dict[str, str]:
+        """Return metadata tags to attach to the recording."""
+
+        tags: Dict[str, str] = {}
+        title = self._clean_metadata_value(self.event.title)
+        if title:
+            tags["title"] = title
+
+        detail = self.event.detailed_description or {}
+
+        epg80 = self._clean_metadata_value(detail.get("epg80"))
+        epg40 = self._clean_metadata_value(detail.get("epg40"))
+        epg200 = self._clean_metadata_value(detail.get("epg200"))
+        epg_information = self._clean_metadata_value(detail.get("epgInformation"))
+
+        description = epg80 or epg40 or self._clean_metadata_value(self.event.description)
+        if description:
+            tags["description"] = description
+
+        if epg200:
+            tags["long_description"] = epg200
+
+        if epg_information:
+            tags.setdefault("comment", epg_information)
+
+        extra_fields = {
+            key: self._clean_metadata_value(value)
+            for key, value in detail.items()
+            if key not in {"epg40", "epg80", "epg200", "epgInformation"}
+        }
+        extra_values = [f"{key}: {value}" for key, value in extra_fields.items() if value]
+        if extra_values:
+            tags["nhk_detailed_description"] = " | ".join(extra_values)
+
+        return tags
+
 
 async def wait_until(target: datetime) -> None:
     """Wait asynchronously until ``target`` using sleep-absolute when possible."""
@@ -129,8 +173,12 @@ async def execute_recording(
         "copy",
         "-t",
         f"{duration_seconds:.0f}",
-        str(plan.output_path),
     ]
+
+    for key, value in plan.metadata_tags.items():
+        command.extend(["-metadata", f"{key}={value}"])
+
+    command.append(str(plan.output_path))
 
     plan.output_path.parent.mkdir(parents=True, exist_ok=True)
 

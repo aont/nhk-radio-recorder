@@ -26,6 +26,7 @@ class BroadcastEvent:
     end: Optional[datetime]
     service_id: str
     area_id: str
+    detailed_description: Optional[Dict[str, str]] = None
 
     @property
     def duration_seconds(self) -> Optional[float]:
@@ -103,6 +104,19 @@ async def fetch_broadcast_events(
                 end_time = datetime.fromisoformat(end_raw)
             except ValueError:
                 end_time = None
+        detailed_description_raw = item.get("detailedDescription")
+        detailed_description: Optional[Dict[str, str]] = None
+        if isinstance(detailed_description_raw, dict):
+            cleaned: Dict[str, str] = {}
+            for key, value in detailed_description_raw.items():
+                if not isinstance(key, str) or not isinstance(value, str):
+                    continue
+                stripped = value.strip()
+                if stripped:
+                    cleaned[key] = stripped
+            if cleaned:
+                detailed_description = cleaned
+
         events.append(
             BroadcastEvent(
                 broadcast_event_id=identifier.get("broadcastEventId", ""),
@@ -112,6 +126,7 @@ async def fetch_broadcast_events(
                 end=end_time,
                 service_id=service_id,
                 area_id=area_id,
+                detailed_description=detailed_description,
             )
         )
     events.sort(key=lambda event: event.start)

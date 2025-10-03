@@ -230,3 +230,74 @@ def test_run_scheduler_accepts_multiple_series(monkeypatch, tmp_path):
 
     assert ("series-a", "event-a") in scheduled
     assert ("series-b", "event-b") in scheduled
+
+
+def test_execute_recording_adds_metadata(monkeypatch, tmp_path):
+    now = datetime.now(timezone.utc)
+    event = BroadcastEvent(
+        broadcast_event_id="event-1",
+        title="ベストオブクラシック",
+        description="Short description",
+        start=now + timedelta(minutes=1),
+        end=now + timedelta(minutes=61),
+        service_id="r1",
+        area_id="130",
+        detailed_description={
+            "epg80": "金子奈緒，バイオリン…マリア・ドゥエニャス",
+            "epg200": "指揮…ファビオ・ルイージ，【解説】広瀬大介",
+            "epgInformation": "Ｎ響　第２０４３回定期公演",
+        },
+    )
+
+    catalog = StreamCatalog(
+        area_slug="tokyo",
+        area_name="Tokyo",
+        area_key="130",
+        station_id=None,
+        streams={"r1": "https://example.invalid/stream.m3u8"},
+    )
+
+    plan = scheduler.RecordingPlan(
+        series_id="series",
+        event=event,
+        stream_catalog=catalog,
+        output_path=tmp_path / "recording.m4a",
+        lead_in=timedelta(0),
+        tail_out=timedelta(0),
+        default_duration=None,
+    )
+
+    captured_command = None
+
+    async def fake_run_ffmpeg(command):
+        nonlocal captured_command
+        captured_command = command
+        return 0
+
+    async def fake_wait_until(target):
+        return None
+
+    monkeypatch.setattr(scheduler, "run_ffmpeg", fake_run_ffmpeg)
+    monkeypatch.setattr(scheduler, "wait_until", fake_wait_until)
+
+    asyncio.run(
+        scheduler.execute_recording(
+            plan,
+            ffmpeg_path="ffmpeg",
+            log_level="info",
+            dry_run=False,
+        )
+    )
+
+    assert captured_command is not None
+
+    metadata_pairs = [
+        captured_command[i + 1]
+        for i in range(len(captured_command) - 1)
+        if captured_command[i] == "-metadata"
+    ]
+
+    assert f"title={event.title}" in metadata_pairs
+    assert "description=金子奈緒，バイオリン…マリア・ドゥエニャス" in metadata_pairs
+    assert "long_description=指揮…ファビオ・ルイージ，【解説】広瀬大介" in metadata_pairs
+    assert "comment=Ｎ響　第２０４３回定期公演" in metadata_pairs
