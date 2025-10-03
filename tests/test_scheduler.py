@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from radio_downloader.nhk import BroadcastEvent, StreamCatalog
+from radio_downloader.nhk import BroadcastEvent, MusicArtist, MusicItem, StreamCatalog
 from radio_downloader import scheduler
 
 
@@ -69,6 +69,61 @@ def test_build_output_path_uses_date_and_title(tmp_path):
     output_path = scheduler.build_output_path(tmp_path, event)
 
     assert output_path.name == "20300102_Sample Program.m4a"
+
+
+def test_metadata_includes_music_list(tmp_path):
+    event = BroadcastEvent(
+        broadcast_event_id="event-1",
+        title="Concert",
+        description=None,
+        start=datetime(2030, 1, 1, 12, 0, tzinfo=timezone.utc),
+        end=datetime(2030, 1, 1, 13, 0, tzinfo=timezone.utc),
+        service_id="r1",
+        area_id="tokyo",
+        music_list=[
+            MusicItem(
+                name="３つの映画音楽",
+                nameruby=None,
+                lyricist=None,
+                composer="武満徹",
+                arranger=None,
+                location="サントリーホール",
+                provider=None,
+                label=None,
+                duration="PT11M41S",
+                code=None,
+                by_artist=[
+                    MusicArtist(name="ＮＨＫ交響楽団", role=None, part="管弦楽"),
+                    MusicArtist(name="ファビオ・ルイージ", role=None, part="指揮"),
+                ],
+            )
+        ],
+    )
+
+    catalog = StreamCatalog(
+        area_slug="tokyo",
+        area_name="Tokyo",
+        area_key="130",
+        station_id=None,
+        streams={"r1": "https://example.invalid/stream.m3u8"},
+    )
+
+    plan = scheduler.RecordingPlan(
+        series_id="series",
+        event=event,
+        stream_catalog=catalog,
+        output_path=scheduler.build_output_path(tmp_path, event),
+        lead_in=timedelta(0),
+        tail_out=timedelta(0),
+        default_duration=None,
+    )
+
+    tags = plan.metadata_tags
+
+    assert "music_list" in tags
+    assert "３つの映画音楽" in tags["music_list"]
+    assert "Composer: 武満徹" in tags["music_list"]
+    assert "Artists: ＮＨＫ交響楽団" in tags["music_list"]
 
 
 def test_run_scheduler_polls_for_additional_events(monkeypatch, tmp_path):

@@ -13,7 +13,13 @@ import aiohttp
 
 import sleep_absolute
 
-from .nhk import BroadcastEvent, StreamCatalog, fetch_broadcast_events, fetch_stream_catalog
+from .nhk import (
+    BroadcastEvent,
+    MusicItem,
+    StreamCatalog,
+    fetch_broadcast_events,
+    fetch_stream_catalog,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -58,6 +64,72 @@ class RecordingPlan:
         stripped = value.strip()
         return stripped or None
 
+    @staticmethod
+    def _format_music_artist(artist) -> Optional[str]:
+        name = RecordingPlan._clean_metadata_value(getattr(artist, "name", None))
+        if not name:
+            return None
+        role = RecordingPlan._clean_metadata_value(getattr(artist, "role", None))
+        part = RecordingPlan._clean_metadata_value(getattr(artist, "part", None))
+        extras = ", ".join(filter(None, (role, part)))
+        return f"{name} ({extras})" if extras else name
+
+    @staticmethod
+    def _format_music_item(index: int, item: MusicItem) -> Optional[str]:
+        title = RecordingPlan._clean_metadata_value(item.name) or "Track"
+        components = []
+
+        info_pairs = [
+            ("Lyricist", item.lyricist),
+            ("Composer", item.composer),
+            ("Arranger", item.arranger),
+            ("Location", item.location),
+            ("Provider", item.provider),
+            ("Label", item.label),
+        ]
+        for label, value in info_pairs:
+            cleaned = RecordingPlan._clean_metadata_value(value)
+            if cleaned:
+                components.append(f"{label}: {cleaned}")
+
+        duration = RecordingPlan._clean_metadata_value(item.duration)
+        if duration:
+            components.append(f"Duration: {duration}")
+
+        code = RecordingPlan._clean_metadata_value(item.code)
+        if code:
+            components.append(f"Code: {code}")
+
+        artist_strings = [
+            formatted
+            for formatted in (
+                RecordingPlan._format_music_artist(artist) for artist in item.by_artist
+            )
+            if formatted
+        ]
+        if artist_strings:
+            components.append("Artists: " + "; ".join(artist_strings))
+
+        subtitle = " - ".join(components) if components else None
+        if subtitle:
+            return f"{index}. {title} - {subtitle}"
+        return f"{index}. {title}"
+
+    @staticmethod
+    def _format_music_list(music_list: Optional[List[MusicItem]]) -> Optional[str]:
+        if not music_list:
+            return None
+        entries = []
+        for index, item in enumerate(music_list, 1):
+            if not isinstance(item, MusicItem):
+                continue
+            formatted = RecordingPlan._format_music_item(index, item)
+            if formatted:
+                entries.append(formatted)
+        if not entries:
+            return None
+        return " || ".join(entries)
+
     @property
     def metadata_tags(self) -> Dict[str, str]:
         """Return metadata tags to attach to the recording."""
@@ -92,6 +164,10 @@ class RecordingPlan:
         extra_values = [f"{key}: {value}" for key, value in extra_fields.items() if value]
         if extra_values:
             tags["nhk_detailed_description"] = " | ".join(extra_values)
+
+        music_list_formatted = self._format_music_list(self.event.music_list)
+        if music_list_formatted:
+            tags["music_list"] = music_list_formatted
 
         return tags
 

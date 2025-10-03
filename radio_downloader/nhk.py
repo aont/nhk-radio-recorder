@@ -3,13 +3,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, Iterable, List, Optional
 
 import aiohttp
 
 __all__ = [
     "BroadcastEvent",
     "StreamCatalog",
+    "MusicArtist",
+    "MusicItem",
     "fetch_broadcast_events",
     "fetch_stream_catalog",
 ]
@@ -27,6 +29,7 @@ class BroadcastEvent:
     service_id: str
     area_id: str
     detailed_description: Optional[Dict[str, str]] = None
+    music_list: Optional[List["MusicItem"]] = None
 
     @property
     def duration_seconds(self) -> Optional[float]:
@@ -52,6 +55,32 @@ class StreamCatalog:
         if key == "r3":
             key = "fm"
         return self.streams.get(key)
+
+
+@dataclass(frozen=True)
+class MusicArtist:
+    """Performer or contributor associated with a music item."""
+
+    name: str
+    role: Optional[str] = None
+    part: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class MusicItem:
+    """Description of a piece of music listed for a broadcast."""
+
+    name: Optional[str]
+    nameruby: Optional[str]
+    lyricist: Optional[str]
+    composer: Optional[str]
+    arranger: Optional[str]
+    location: Optional[str]
+    provider: Optional[str]
+    label: Optional[str]
+    duration: Optional[str]
+    code: Optional[str]
+    by_artist: List[MusicArtist]
 
 
 _EVENT_API_TEMPLATE = "https://api.nhk.jp/r7/f/broadcastevent/rs"
@@ -84,6 +113,53 @@ async def fetch_broadcast_events(
         return []
 
     events: List[BroadcastEvent] = []
+
+    def _clean_text(value: Optional[str]) -> Optional[str]:
+        if not isinstance(value, str):
+            return None
+        stripped = value.strip()
+        return stripped or None
+
+    def _parse_music_list(raw_list: Iterable[dict]) -> List[MusicItem]:
+        music_items: List[MusicItem] = []
+        for entry in raw_list:
+            if not isinstance(entry, dict):
+                continue
+            artists: List[MusicArtist] = []
+            artists_raw = entry.get("byArtist") or []
+            if isinstance(artists_raw, Iterable) and not isinstance(
+                artists_raw, (str, bytes, dict)
+            ):
+                for artist in artists_raw:
+                    if not isinstance(artist, dict):
+                        continue
+                    name = _clean_text(artist.get("name"))
+                    if not name:
+                        continue
+                    artists.append(
+                        MusicArtist(
+                            name=name,
+                            role=_clean_text(artist.get("role")),
+                            part=_clean_text(artist.get("part")),
+                        )
+                    )
+            music_items.append(
+                MusicItem(
+                    name=_clean_text(entry.get("name")),
+                    nameruby=_clean_text(entry.get("nameruby")),
+                    lyricist=_clean_text(entry.get("lyricist")),
+                    composer=_clean_text(entry.get("composer")),
+                    arranger=_clean_text(entry.get("arranger")),
+                    location=_clean_text(entry.get("location")),
+                    provider=_clean_text(entry.get("provider")),
+                    label=_clean_text(entry.get("label")),
+                    duration=_clean_text(entry.get("duration")),
+                    code=_clean_text(entry.get("code")),
+                    by_artist=artists,
+                )
+            )
+        return music_items
+
     for item in payload.get("result", []):
         start_raw = item.get("startDate")
         if not start_raw:
@@ -117,6 +193,17 @@ async def fetch_broadcast_events(
             if cleaned:
                 detailed_description = cleaned
 
+        music_list: Optional[List[MusicItem]] = None
+        misc = item.get("misc")
+        if isinstance(misc, dict):
+            raw_music_list = misc.get("musicList")
+            if isinstance(raw_music_list, Iterable) and not isinstance(
+                raw_music_list, (str, bytes, dict)
+            ):
+                parsed_music = _parse_music_list(raw_music_list)
+                if parsed_music:
+                    music_list = parsed_music
+
         events.append(
             BroadcastEvent(
                 broadcast_event_id=identifier.get("broadcastEventId", ""),
@@ -127,6 +214,7 @@ async def fetch_broadcast_events(
                 service_id=service_id,
                 area_id=area_id,
                 detailed_description=detailed_description,
+                music_list=music_list,
             )
         )
     events.sort(key=lambda event: event.start)
