@@ -9,3 +9,10 @@ li { border-bottom: 1px solid #ddd; padding: 8px 0; }
 .small { color: #666; font-size: 12px; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
 audio { width: 100%; background: #f0f2f7; }
+
+
+.player-section audio {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+}
