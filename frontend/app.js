@@ -47,16 +47,12 @@ function renderReservationMetadata(meta) {
     ['Series ID', meta.series_id],
     ['Series Code', meta.series_code],
     ['Broadcast Event ID', meta.broadcast_event_id],
-    ['Radio Series ID', meta.radio_series_id],
     ['Radio Episode ID', meta.radio_episode_id]
   ].filter(([, value]) => value);
   const plainRows = rows.map(([label, value]) => `<div class="small"><b>${escapeHtml(label)}:</b> ${escapeHtml(value)}</div>`).join('');
   return `
     ${plainRows}
     ${linkRow('Program URL', meta.program_url)}
-    ${linkRow('Broadcast Event Info URL', meta.broadcast_event_info_url)}
-    ${linkRow('Episode API URL', meta.episode_api_url)}
-    ${linkRow('Series API URL', meta.series_api_url)}
   `;
 }
 
@@ -74,7 +70,6 @@ function renderSeriesWatchMetadata(payload) {
   return `
     ${plainRows}
     ${linkRow('Program URL', meta.program_url)}
-    ${linkRow('Thumbnail URL', meta.series_thumbnail_url)}
   `;
 }
 
@@ -126,10 +121,7 @@ async function showEvents(seriesId, seriesCode) {
       <div class="small">Series ID: ${escapeHtml(ev.radioSeriesId || '-')} / Episode ID: ${escapeHtml(ev.radioEpisodeId || '-')}</div>
       ${ev.genres?.length ? `<div class="small">Genres: ${escapeHtml(ev.genres.join(', '))}</div>` : ''}
       ${ev.description ? `<div class="small">${escapeHtml(ev.description)}</div>` : ''}
-      ${linkRow('Program URL', ev.episodeUrl || ev.seriesUrl)}
-      ${linkRow('Broadcast Event API', ev.eventUrl)}
-      ${linkRow('Episode API', ev.episodeApiUrl)}
-      ${linkRow('Series API', ev.seriesApiUrl)}`;
+      ${linkRow('Program URL', ev.episodeUrl || ev.seriesUrl)}`;
     const actions = document.createElement('div');
     actions.className = 'actions';
     const btn = document.createElement('button');
