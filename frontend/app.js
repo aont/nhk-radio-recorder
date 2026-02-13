@@ -40,7 +40,7 @@ function renderSeries() {
 async function showEvents(seriesId) {
   selectedSeries = seriesId;
   document.querySelector('#eventTarget').textContent = `Series ID: ${seriesId}`;
-  const events = await (await api(`/api/events?series_id=${seriesId}`)).json();
+  const events = await (await api(`/api/events?series_id=${seriesId}&to_days=7`)).json();
   const ul = document.querySelector('#eventsList');
   ul.innerHTML = '';
   for (const ev of events) {
