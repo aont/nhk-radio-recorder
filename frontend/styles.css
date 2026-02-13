@@ -8,4 +8,4 @@ ul { list-style: none; padding: 0; max-height: 320px; overflow: auto; }
 li { border-bottom: 1px solid #ddd; padding: 8px 0; }
 .small { color: #666; font-size: 12px; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
-video { width: 100%; max-height: 260px; background: #000; }
+audio { width: 100%; background: #f0f2f7; }

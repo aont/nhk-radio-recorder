@@ -142,18 +142,18 @@ async function loadRecordings() {
 }
 
 function playRecording(id) {
-  const video = document.querySelector('#player');
+  const player = document.querySelector('#player');
   const src = `/recordings/${id}/recording.m3u8`;
-  if (video.canPlayType('application/vnd.apple.mpegurl')) {
-    video.src = src;
+  if (player.canPlayType('application/vnd.apple.mpegurl')) {
+    player.src = src;
   } else if (window.Hls && Hls.isSupported()) {
     const hls = new Hls();
     hls.loadSource(src);
-    hls.attachMedia(video);
+    hls.attachMedia(player);
   } else {
     alert('HLS playback is not supported in this browser.');
   }
-  video.play();
+  player.play();
 }
 
 async function editMetadata(id) {
