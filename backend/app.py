@@ -5,6 +5,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import shutil
 import tempfile
 import uuid
@@ -115,10 +116,35 @@ class NHKClient:
     def __init__(self, session: ClientSession):
         self.session = session
 
-    @staticmethod
-    def extract_series_key(url: str) -> str | None:
-        parts = [p for p in urlparse(url).path.split("/") if p]
+    SERIES_CODE_PATTERN = re.compile(r"/rs/([A-Z0-9]+)/?", re.IGNORECASE)
+
+    @classmethod
+    def extract_series_key(cls, url: str) -> str | None:
+        path = urlparse(url).path
+        match = cls.SERIES_CODE_PATTERN.search(path)
+        if match:
+            return match.group(1).upper()
+        parts = [p for p in path.split("/") if p]
         return parts[-1] if parts else None
+
+    async def resolve_series_code(self, url: str) -> str | None:
+        direct = self.extract_series_key(url)
+        if self.SERIES_CODE_PATTERN.search(urlparse(url).path):
+            return direct
+        try:
+            if DEBUG_LOG:
+                logger.info("[debug] resolve_series_code: HEAD %s", url)
+            async with self.session.head(url, allow_redirects=False) as res:
+                location = (res.headers.get("Location") or "").strip()
+            if not location:
+                return direct
+            redirected = self.extract_series_key(location)
+            if redirected:
+                return redirected
+        except Exception:
+            if DEBUG_LOG:
+                logger.exception("[debug] resolve_series_code failed: %s", url)
+        return direct
 
     async def _get_json(self, url: str, headers: dict[str, str] | None = None) -> Any:
         retries = [0.5, 1.5]
@@ -165,6 +191,7 @@ class NHKClient:
     async def fetch_series(self) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         seen_ids: set[int] = set()
+        resolved_series_codes: dict[str, str | None] = {}
         for kana in SERIES_KANA_LIST:
             headers = {
                 "accept": "application/json, text/javascript, */*; q=0.01",
@@ -184,13 +211,16 @@ class NHKClient:
                 seen_ids.add(series_id)
                 broadcasts = [x.strip() for x in str(item["radio_broadcast"]).split(",") if x.strip()]
                 series_url = str(item["url"]).strip()
+                if series_url not in resolved_series_codes:
+                    resolved_series_codes[series_url] = await self.resolve_series_code(series_url)
+                resolved_series_code = resolved_series_codes[series_url]
                 out.append(
                     {
                         "id": series_id,
                         "title": str(item["title"]).strip(),
                         "broadcasts": broadcasts,
                         "url": series_url,
-                        "seriesCode": self.extract_series_key(series_url),
+                        "seriesCode": resolved_series_code,
                         "thumbnailUrl": (item.get("thumbnail_url") or "").strip() or None,
                         "scheduleText": (item.get("schedule") or "").strip() or None,
                         "areaName": (item.get("area") or "").strip() or None,
