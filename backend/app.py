@@ -467,6 +467,18 @@ def build_reservation_metadata(series_id: Any, series_code: Any, event: dict[str
     }
 
 
+def build_series_watch_metadata(series_id: Any, series_code: Any, payload: dict[str, Any]) -> dict[str, str]:
+    return {
+        "series_id": str(series_id or ""),
+        "series_code": str(series_code or ""),
+        "series_title": str(payload.get("series_title") or ""),
+        "series_area": str(payload.get("series_area") or ""),
+        "series_schedule": str(payload.get("series_schedule") or ""),
+        "program_url": str(payload.get("program_url") or ""),
+        "series_thumbnail_url": str(payload.get("series_thumbnail_url") or ""),
+    }
+
+
 async def api_series(request: web.Request) -> web.Response:
     cache = request.app["series_cache"]
     now = utc_now()
@@ -505,12 +517,18 @@ async def api_reservations_get(request: web.Request) -> web.Response:
 
 async def api_reservations_post(request: web.Request) -> web.Response:
     payload = await request.json()
+    reservation_payload = payload.setdefault("payload", {})
     if payload.get("type") == "single_event":
-        reservation_payload = payload.setdefault("payload", {})
         reservation_payload["metadata"] = build_reservation_metadata(
             reservation_payload.get("series_id"),
             reservation_payload.get("series_code"),
             reservation_payload.get("event") or {},
+        )
+    if payload.get("type") == "series_watch":
+        reservation_payload["metadata"] = build_series_watch_metadata(
+            reservation_payload.get("series_id"),
+            reservation_payload.get("series_code"),
+            reservation_payload,
         )
     reservation = Reservation(
         id=str(uuid.uuid4()),

@@ -60,6 +60,24 @@ function renderReservationMetadata(meta) {
   `;
 }
 
+function renderSeriesWatchMetadata(payload) {
+  const meta = payload?.metadata;
+  if (!meta || typeof meta !== 'object') return '';
+  const rows = [
+    ['Series ID', meta.series_id],
+    ['Series Code', meta.series_code],
+    ['Series Title', meta.series_title],
+    ['Area', meta.series_area],
+    ['Schedule', meta.series_schedule]
+  ].filter(([, value]) => value);
+  const plainRows = rows.map(([label, value]) => `<div class="small"><b>${escapeHtml(label)}:</b> ${escapeHtml(value)}</div>`).join('');
+  return `
+    ${plainRows}
+    ${linkRow('Program URL', meta.program_url)}
+    ${linkRow('Thumbnail URL', meta.series_thumbnail_url)}
+  `;
+}
+
 async function loadSeries() {
   const list = await (await api('/api/series')).json();
   debugLog('loadSeries raw count', list.length);
@@ -137,8 +155,9 @@ async function reserveEvent(event) {
 }
 
 async function reserveSeries(seriesId, seriesCode) {
+  const seriesInfo = seriesCache.find((s) => String(s.id) === String(seriesId));
   const areaId = '';
-  debugLog('reserveSeries', { seriesId, seriesCode, areaId });
+  debugLog('reserveSeries', { seriesId, seriesCode, areaId, seriesInfo });
   await api('/api/reservations', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -147,6 +166,11 @@ async function reserveSeries(seriesId, seriesCode) {
       payload: {
         series_id: Number(seriesId),
         series_code: seriesCode || null,
+        series_title: seriesInfo?.title || null,
+        series_area: seriesInfo?.areaName || null,
+        series_schedule: seriesInfo?.scheduleText || null,
+        program_url: seriesInfo?.url || null,
+        series_thumbnail_url: seriesInfo?.thumbnailUrl || null,
         area_id: areaId || null,
         seen_broadcast_event_ids: []
       }
@@ -163,7 +187,9 @@ async function loadReservations() {
   rows.forEach(r => {
     const li = document.createElement('li');
     const event = r.payload?.event || {};
-    const metadataHtml = renderReservationMetadata(r.payload?.metadata);
+    const metadataHtml = r.type === 'series_watch'
+      ? renderSeriesWatchMetadata(r.payload)
+      : renderReservationMetadata(r.payload?.metadata);
     li.innerHTML = `<b>${r.type}</b> <span class="small">${r.status} / ${r.id}</span>
       ${event.name ? `<div class="small"><b>${escapeHtml(event.name)}</b> (${fmt(event.startDate)} - ${fmt(event.endDate)})</div>` : ''}
       ${metadataHtml || `<div class="small">${escapeHtml(JSON.stringify(r.payload))}</div>`}
