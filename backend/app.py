@@ -19,6 +19,7 @@ from xml.etree import ElementTree
 
 from aiohttp import ClientSession, ClientTimeout, web
 from sleep_absolute import wait_until
+from asyncio.subprocess import PIPE
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
@@ -440,9 +441,9 @@ class RecorderService:
         rec_dir.mkdir(parents=True, exist_ok=True)
         manifest = rec_dir / "recording.m3u8"
 
-        start_dt = datetime.fromisoformat(event["startDate"])
         end_dt = datetime.fromisoformat(event["endDate"])
-        duration = max(1, int((end_dt - start_dt).total_seconds()))
+        if end_dt.tzinfo is None:
+            end_dt = end_dt.replace(tzinfo=timezone.utc)
 
         cmd = [
             "ffmpeg",
@@ -451,8 +452,6 @@ class RecorderService:
             "error",
             "-i",
             stream_url,
-            "-t",
-            str(duration),
             "-c",
             "copy",
             "-f",
@@ -463,7 +462,15 @@ class RecorderService:
             "0",
             str(manifest),
         ]
-        proc = await asyncio.create_subprocess_exec(*cmd)
+        proc = await asyncio.create_subprocess_exec(*cmd, stdin=PIPE)
+        if end_dt > utc_now():
+            await wait_until(end_dt)
+
+        if proc.returncode is None and proc.stdin:
+            with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+                proc.stdin.write(b"q")
+                await proc.stdin.drain()
+            proc.stdin.close()
         ret = await proc.wait()
 
         if ret != 0:
