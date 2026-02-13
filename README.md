@@ -34,7 +34,7 @@ Open http://localhost:8080 .
 ## API summary
 
 - `GET /api/series`
-- `GET /api/events?series_id=<id>&to_days=1`
+- `GET /api/events?series_id=<id>`
 - `GET /api/reservations`
 - `POST /api/reservations`
 - `DELETE /api/reservations/{reservation_id}`

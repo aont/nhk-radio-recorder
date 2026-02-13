@@ -30,6 +30,7 @@ SERIES_CACHE_FILE = DATA_DIR / "series_cache.json"
 SERIES_URL_TMPL = "https://www.nhk.or.jp/radio-api/app/v1/web/series?kana={kana}"
 SERIES_KANA_LIST = ("a", "k", "s", "t", "n", "h", "m", "y", "r", "w")
 EVENT_URL_TMPL = "https://api.nhk.jp/r7/f/broadcastevent/rs/{series_key}.json?offset=0&size=10&to={to_time}&status=scheduled"
+EVENT_LOOKAHEAD_DAYS = 7
 CONFIG_URL = "https://www.nhk.or.jp/radio/config/config_web.xml"
 SERIES_CACHE_TTL = timedelta(hours=1)
 SERIES_WATCH_EXPAND_INTERVAL_SECONDS = 60 * 60
@@ -231,15 +232,15 @@ class NHKClient:
             logger.info("[debug] fetch_series: %d rows", len(out))
         return out
 
-    async def fetch_events(self, series_key: str, to_days: int = 1) -> list[dict[str, Any]]:
-        to_time = (datetime.now() + timedelta(days=to_days)).strftime("%Y-%m-%dT%H:%M")
+    async def fetch_events(self, series_key: str) -> list[dict[str, Any]]:
+        to_time = (datetime.now() + timedelta(days=EVENT_LOOKAHEAD_DAYS)).strftime("%Y-%m-%dT%H:%M")
         url = EVENT_URL_TMPL.format(series_key=series_key, to_time=to_time)
         status, payload = await self._get_json(url)
         if DEBUG_LOG:
             logger.info(
-                "[debug] fetch_events: series_key=%s to_days=%s to_time=%s status=%s result_count=%s",
+                "[debug] fetch_events: series_key=%s lookahead_days=%s to_time=%s status=%s result_count=%s",
                 series_key,
-                to_days,
+                EVENT_LOOKAHEAD_DAYS,
                 to_time,
                 status,
                 len(payload.get("result", [])) if isinstance(payload, dict) else None,
@@ -562,11 +563,15 @@ async def api_events(request: web.Request) -> web.Response:
     series_key = (request.query.get("series_code") or request.query.get("series_id") or "").strip()
     if not series_key:
         return web.json_response([])
-    to_days = int(request.query.get("to_days", "1"))
     try:
-        events = await request.app["nhk"].fetch_events(series_key, to_days)
+        events = await request.app["nhk"].fetch_events(series_key)
         if DEBUG_LOG:
-            logger.info("[debug] /api/events: series_key=%s to_days=%s -> %d rows", series_key, to_days, len(events))
+            logger.info(
+                "[debug] /api/events: series_key=%s lookahead_days=%s -> %d rows",
+                series_key,
+                EVENT_LOOKAHEAD_DAYS,
+                len(events),
+            )
         return web.json_response(events)
     except Exception as exc:
         logger.warning("event fetch failed: %s", exc)

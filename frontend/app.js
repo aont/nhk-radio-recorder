@@ -114,7 +114,7 @@ async function showEvents(seriesId, seriesCode) {
   document.querySelector('#eventTarget').textContent = `Series: ${seriesCode || seriesId}`;
   debugLog('showEvents start', { seriesId, seriesCode });
   const key = encodeURIComponent(seriesCode || String(seriesId));
-  const events = await (await api(`/api/events?series_code=${key}&to_days=7`)).json();
+  const events = await (await api(`/api/events?series_code=${key}`)).json();
   debugLog('showEvents events count', events.length, events.slice(0, 3));
   const ul = document.querySelector('#eventsList');
   ul.innerHTML = '';
