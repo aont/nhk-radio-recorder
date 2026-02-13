@@ -1,8 +1,16 @@
 let seriesCache = [];
 let selectedSeries = null;
+const DEBUG_LOG = ['1', 'true', 'yes', 'on'].includes((new URLSearchParams(window.location.search).get('debug') || localStorage.getItem('debugLog') || '').toLowerCase());
+
+function debugLog(...args) {
+  if (!DEBUG_LOG) return;
+  console.log('[debug]', ...args);
+}
 
 async function api(url, opts) {
+  debugLog('api request', { url, opts });
   const res = await fetch(url, opts);
+  debugLog('api response', { url, status: res.status, ok: res.ok });
   if (!res.ok) throw new Error(await res.text());
   return res;
 }
@@ -13,7 +21,9 @@ function fmt(v) {
 
 async function loadSeries() {
   const list = await (await api('/api/series')).json();
+  debugLog('loadSeries raw count', list.length);
   seriesCache = list.sort((a, b) => (a.areaName || '').localeCompare(b.areaName || '') || a.title.localeCompare(b.title));
+  debugLog('loadSeries sorted count', seriesCache.length);
   renderSeries();
 }
 
@@ -23,6 +33,8 @@ function renderSeries() {
   const broadcast = document.querySelector('#broadcastFilter').value;
   const ul = document.querySelector('#seriesList');
   ul.innerHTML = '';
+  debugLog('renderSeries filters', { keyword, area, broadcast, total: seriesCache.length });
+  let rendered = 0;
   seriesCache
     .filter(s => (!keyword || s.title.toLowerCase().includes(keyword)) && (!area || (s.areaName || '').toLowerCase().includes(area)) && (!broadcast || s.broadcasts.includes(broadcast)))
     .forEach(s => {
@@ -34,13 +46,17 @@ function renderSeries() {
           <button data-sid="${s.id}" class="watch-series">Watch series</button>
         </div>`;
       ul.appendChild(li);
+      rendered += 1;
     });
+  debugLog('renderSeries rendered', rendered);
 }
 
 async function showEvents(seriesId) {
   selectedSeries = seriesId;
   document.querySelector('#eventTarget').textContent = `Series ID: ${seriesId}`;
+  debugLog('showEvents start', { seriesId });
   const events = await (await api(`/api/events?series_id=${seriesId}&to_days=7`)).json();
+  debugLog('showEvents events count', events.length, events.slice(0, 3));
   const ul = document.querySelector('#eventsList');
   ul.innerHTML = '';
   for (const ev of events) {
@@ -59,6 +75,7 @@ async function showEvents(seriesId) {
 }
 
 async function reserveEvent(event) {
+  debugLog('reserveEvent', { selectedSeries, event });
   await api('/api/reservations', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -69,6 +86,7 @@ async function reserveEvent(event) {
 
 async function reserveSeries(seriesId) {
   const areaId = prompt('Optional area_id filter for watcher (blank for all):', '') || '';
+  debugLog('reserveSeries', { seriesId, areaId });
   await api('/api/reservations', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -79,6 +97,7 @@ async function reserveSeries(seriesId) {
 
 async function loadReservations() {
   const rows = await (await api('/api/reservations')).json();
+  debugLog('loadReservations count', rows.length);
   const ul = document.querySelector('#reservationList');
   ul.innerHTML = '';
   rows.forEach(r => {
@@ -92,6 +111,7 @@ async function loadReservations() {
 
 async function loadRecordings() {
   const rows = await (await api('/api/recordings')).json();
+  debugLog('loadRecordings count', rows.length);
   const ul = document.querySelector('#recordingList');
   ul.innerHTML = '';
   rows.forEach(r => {
@@ -130,6 +150,7 @@ async function editMetadata(id) {
   const payload = {};
   if (title) payload.title = title;
   if (description) payload.description = description;
+  debugLog('editMetadata', { id, payload });
   await api(`/api/recordings/${id}/metadata`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -140,6 +161,7 @@ async function editMetadata(id) {
 
 async function bulkDownload() {
   const ids = [...document.querySelectorAll('.bulk:checked')].map(x => x.value);
+  debugLog('bulkDownload ids', ids);
   if (!ids.length) return alert('No recordings selected.');
   const res = await api('/api/recordings/bulk-download', {
     method: 'POST',
@@ -178,3 +200,4 @@ document.addEventListener('click', async (e) => {
 
 loadReservations();
 loadRecordings();
+debugLog('frontend debug enabled', { DEBUG_LOG, query: window.location.search });

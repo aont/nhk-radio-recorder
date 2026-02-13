@@ -44,6 +44,12 @@ Open http://localhost:8080 .
 - `POST /api/recordings/bulk-download`
 - `DELETE /api/recordings/{recording_id}`
 
+
+## Debug logging
+
+- Backend: set environment variable `DEBUG_LOG=1` before launching to emit detailed request/response logs from the NHK fetch paths and `/api/events` handler.
+- Frontend: open the app with `?debug=1` (for example `http://localhost:8080/?debug=1`) or set `localStorage.debugLog = "1"` in DevTools.
+
 ## Notes
 
 - The scheduler loop runs every 30 seconds.

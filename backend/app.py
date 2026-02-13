@@ -31,6 +31,7 @@ CONFIG_URL = "https://www.nhk.or.jp/radio/config/config_web.xml"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("nhk-recorder")
+DEBUG_LOG = os.getenv("DEBUG_LOG", "").lower() in {"1", "true", "yes", "on"}
 
 
 @dataclass
@@ -90,12 +91,23 @@ class NHKClient:
         retries = [0.5, 1.5]
         for i in range(3):
             try:
+                if DEBUG_LOG:
+                    logger.info("[debug] GET JSON: %s (attempt=%d)", url, i + 1)
                 async with self.session.get(url, headers=headers) as res:
                     if res.status >= 500 and i < 2:
                         await asyncio.sleep(retries[i])
                         continue
-                    return res.status, await res.json(content_type=None)
+                    payload = await res.json(content_type=None)
+                    if DEBUG_LOG:
+                        logger.info(
+                            "[debug] GET JSON done: status=%s keys=%s",
+                            res.status,
+                            sorted(payload.keys()) if isinstance(payload, dict) else type(payload).__name__,
+                        )
+                    return res.status, payload
             except Exception:
+                if DEBUG_LOG:
+                    logger.exception("[debug] GET JSON failed: %s", url)
                 if i == 2:
                     raise
                 await asyncio.sleep(retries[i])
@@ -149,11 +161,23 @@ class NHKClient:
                         "areaName": (item.get("area") or "").strip() or None,
                     }
                 )
+        if DEBUG_LOG:
+            logger.info("[debug] fetch_series: %d rows", len(out))
         return out
 
     async def fetch_events(self, series_id: int, to_days: int = 1) -> list[dict[str, Any]]:
         to_time = (datetime.now() + timedelta(days=to_days)).strftime("%Y-%m-%dT%H:%M")
-        status, payload = await self._get_json(EVENT_URL_TMPL.format(series_id=series_id, to_time=to_time))
+        url = EVENT_URL_TMPL.format(series_id=series_id, to_time=to_time)
+        status, payload = await self._get_json(url)
+        if DEBUG_LOG:
+            logger.info(
+                "[debug] fetch_events: series_id=%s to_days=%s to_time=%s status=%s result_count=%s",
+                series_id,
+                to_days,
+                to_time,
+                status,
+                len(payload.get("result", [])) if isinstance(payload, dict) else None,
+            )
         if status == 404:
             return []
         if payload.get("error", {}).get("statuscode") == 404:
@@ -182,6 +206,8 @@ class NHKClient:
                     "musicList": ((ev.get("misc") or {}).get("musicList") or []),
                 }
             )
+        if DEBUG_LOG:
+            logger.info("[debug] fetch_events filtered: %d rows", len(out))
         return out
 
     async def fetch_stream_catalog(self) -> dict[str, dict[str, Any]]:
@@ -413,7 +439,10 @@ async def api_events(request: web.Request) -> web.Response:
     sid = int(request.query["series_id"])
     to_days = int(request.query.get("to_days", "1"))
     try:
-        return web.json_response(await request.app["nhk"].fetch_events(sid, to_days))
+        events = await request.app["nhk"].fetch_events(sid, to_days)
+        if DEBUG_LOG:
+            logger.info("[debug] /api/events: series_id=%s to_days=%s -> %d rows", sid, to_days, len(events))
+        return web.json_response(events)
     except Exception as exc:
         logger.warning("event fetch failed: %s", exc)
         return web.json_response([])
