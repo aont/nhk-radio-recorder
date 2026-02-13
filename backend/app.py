@@ -24,6 +24,7 @@ RECORDINGS_DIR = BASE_DIR / "recordings"
 FRONTEND_DIR = BASE_DIR / "frontend"
 RESERVATIONS_FILE = DATA_DIR / "reservations.json"
 RECORDINGS_FILE = DATA_DIR / "recordings.json"
+SERIES_CACHE_FILE = DATA_DIR / "series_cache.json"
 
 SERIES_URL_TMPL = "https://www.nhk.or.jp/radio-api/app/v1/web/series?kana={kana}"
 SERIES_KANA_LIST = ("a", "k", "s", "t", "n", "h", "m", "y", "r", "w")
@@ -73,6 +74,31 @@ def ensure_dirs() -> None:
         RESERVATIONS_FILE.write_text("[]", encoding="utf-8")
     if not RECORDINGS_FILE.exists():
         RECORDINGS_FILE.write_text("[]", encoding="utf-8")
+
+
+def load_series_cache() -> dict[str, Any]:
+    default = {"value": None, "expires_at": datetime.fromtimestamp(0, timezone.utc)}
+    if not SERIES_CACHE_FILE.exists():
+        return default
+    try:
+        payload = json.loads(SERIES_CACHE_FILE.read_text(encoding="utf-8"))
+        expires_at = datetime.fromisoformat(str(payload.get("expires_at", "")))
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        value = payload.get("value")
+        if not isinstance(value, list):
+            value = None
+        return {"value": value, "expires_at": expires_at}
+    except Exception:
+        logger.warning("failed to load series cache: %s", SERIES_CACHE_FILE)
+        return default
+
+
+def persist_series_cache(cache: dict[str, Any]) -> None:
+    SERIES_CACHE_FILE.write_text(
+        json.dumps({"value": cache.get("value"), "expires_at": cache["expires_at"].isoformat()}, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
 
 def read_json(path: Path) -> list[dict[str, Any]]:
@@ -488,6 +514,7 @@ async def api_series(request: web.Request) -> web.Response:
         data = await request.app["nhk"].fetch_series()
         cache["value"] = data
         cache["expires_at"] = now + SERIES_CACHE_TTL
+        persist_series_cache(cache)
         return web.json_response(data)
     except Exception as exc:
         logger.warning("series fetch failed: %s", exc)
@@ -631,7 +658,7 @@ async def create_app() -> web.Application:
     app = web.Application()
     app["session"] = session
     app["nhk"] = NHKClient(session)
-    app["series_cache"] = {"value": None, "expires_at": datetime.fromtimestamp(0, timezone.utc)}
+    app["series_cache"] = load_series_cache()
 
     app.router.add_get("/", index)
     app.router.add_static("/static", FRONTEND_DIR)
