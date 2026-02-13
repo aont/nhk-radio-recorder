@@ -1,5 +1,6 @@
 let seriesCache = [];
 let selectedSeries = null;
+const seriesCodeByUrl = new Map();
 const DEBUG_LOG = ['1', 'true', 'yes', 'on'].includes((new URLSearchParams(window.location.search).get('debug') || localStorage.getItem('debugLog') || '').toLowerCase());
 
 function debugLog(...args) {
@@ -95,8 +96,8 @@ function renderSeries() {
       li.innerHTML = `<b>${s.title}</b> <span class="small">[${(s.areaName || 'N/A')} / ${(s.broadcasts || []).join(',')}]</span>
         <div class="small">${s.scheduleText || ''}</div>
         <div class="actions">
-          <button data-sid="${s.id}" data-scode="${s.seriesCode || ''}" class="show-events">Show events</button>
-          <button data-sid="${s.id}" data-scode="${s.seriesCode || ''}" class="watch-series">Watch series</button>
+          <button data-sid="${s.id}" data-scode="${s.seriesCode || ''}" data-surl="${escapeHtml(s.url || '')}" class="show-events">Show events</button>
+          <button data-sid="${s.id}" data-scode="${s.seriesCode || ''}" data-surl="${escapeHtml(s.url || '')}" class="watch-series">Watch series</button>
         </div>`;
       ul.appendChild(li);
       rendered += 1;
@@ -104,11 +105,24 @@ function renderSeries() {
   debugLog('renderSeries rendered', rendered);
 }
 
-async function showEvents(seriesId, seriesCode) {
-  selectedSeries = { seriesId, seriesCode };
-  document.querySelector('#eventTarget').textContent = `Series: ${seriesCode || seriesId}`;
-  debugLog('showEvents start', { seriesId, seriesCode });
-  const key = encodeURIComponent(seriesCode || String(seriesId));
+
+async function resolveSeriesCode(seriesCode, seriesUrl) {
+  if (seriesCode) return seriesCode;
+  if (!seriesUrl) return null;
+  if (seriesCodeByUrl.has(seriesUrl)) return seriesCodeByUrl.get(seriesUrl);
+  const key = encodeURIComponent(seriesUrl);
+  const payload = await (await api(`/api/series/resolve?series_url=${key}`)).json();
+  const resolved = payload?.seriesCode || null;
+  seriesCodeByUrl.set(seriesUrl, resolved);
+  return resolved;
+}
+
+async function showEvents(seriesId, seriesCode, seriesUrl) {
+  const resolvedSeriesCode = await resolveSeriesCode(seriesCode, seriesUrl);
+  selectedSeries = { seriesId, seriesCode: resolvedSeriesCode };
+  document.querySelector('#eventTarget').textContent = `Series: ${resolvedSeriesCode || seriesId}`;
+  debugLog('showEvents start', { seriesId, seriesCode, seriesUrl, resolvedSeriesCode });
+  const key = encodeURIComponent(resolvedSeriesCode || String(seriesId));
   const events = await (await api(`/api/events?series_code=${key}`)).json();
   debugLog('showEvents events count', events.length, events.slice(0, 3));
   const ul = document.querySelector('#eventsList');
@@ -146,10 +160,11 @@ async function reserveEvent(event) {
   await loadReservations();
 }
 
-async function reserveSeries(seriesId, seriesCode) {
+async function reserveSeries(seriesId, seriesCode, seriesUrl) {
   const seriesInfo = seriesCache.find((s) => String(s.id) === String(seriesId));
+  const resolvedSeriesCode = await resolveSeriesCode(seriesCode, seriesUrl || seriesInfo?.url);
   const areaId = '';
-  debugLog('reserveSeries', { seriesId, seriesCode, areaId, seriesInfo });
+  debugLog('reserveSeries', { seriesId, seriesCode, seriesUrl, resolvedSeriesCode, areaId, seriesInfo });
   await api('/api/reservations', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -157,7 +172,7 @@ async function reserveSeries(seriesId, seriesCode) {
       type: 'series_watch',
       payload: {
         series_id: Number(seriesId),
-        series_code: seriesCode || null,
+        series_code: resolvedSeriesCode || null,
         series_title: seriesInfo?.title || null,
         series_area: seriesInfo?.areaName || null,
         series_schedule: seriesInfo?.scheduleText || null,
@@ -264,8 +279,8 @@ document.querySelector('#refreshRecordings').onclick = loadRecordings;
 document.querySelector('#bulkDownload').onclick = bulkDownload;
 
 document.addEventListener('click', async (e) => {
-  if (e.target.matches('.show-events')) await showEvents(e.target.dataset.sid, e.target.dataset.scode);
-  if (e.target.matches('.watch-series')) await reserveSeries(e.target.dataset.sid, e.target.dataset.scode);
+  if (e.target.matches('.show-events')) await showEvents(e.target.dataset.sid, e.target.dataset.scode, e.target.dataset.surl);
+  if (e.target.matches('.watch-series')) await reserveSeries(e.target.dataset.sid, e.target.dataset.scode, e.target.dataset.surl);
   if (e.target.matches('.delete-reservation')) {
     await api(`/api/reservations/${e.target.dataset.rid}`, { method: 'DELETE' });
     await loadReservations();

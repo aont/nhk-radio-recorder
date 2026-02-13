@@ -193,7 +193,6 @@ class NHKClient:
     async def fetch_series(self) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         seen_ids: set[int] = set()
-        resolved_series_codes: dict[str, str | None] = {}
         for kana in SERIES_KANA_LIST:
             headers = {
                 "accept": "application/json, text/javascript, */*; q=0.01",
@@ -213,16 +212,12 @@ class NHKClient:
                 seen_ids.add(series_id)
                 broadcasts = [x.strip() for x in str(item["radio_broadcast"]).split(",") if x.strip()]
                 series_url = str(item["url"]).strip()
-                if series_url not in resolved_series_codes:
-                    resolved_series_codes[series_url] = await self.resolve_series_code(series_url)
-                resolved_series_code = resolved_series_codes[series_url]
                 out.append(
                     {
                         "id": series_id,
                         "title": str(item["title"]).strip(),
                         "broadcasts": broadcasts,
                         "url": series_url,
-                        "seriesCode": resolved_series_code,
                         "thumbnailUrl": (item.get("thumbnail_url") or "").strip() or None,
                         "scheduleText": (item.get("schedule") or "").strip() or None,
                         "areaName": (item.get("area") or "").strip() or None,
@@ -560,11 +555,18 @@ async def api_series(request: web.Request) -> web.Response:
 
 
 async def api_events(request: web.Request) -> web.Response:
-    series_key = (request.query.get("series_code") or request.query.get("series_id") or "").strip()
+    nhk: NHKClient = request.app["nhk"]
+    series_key = (request.query.get("series_code") or "").strip()
+    if not series_key:
+        series_url = (request.query.get("series_url") or "").strip()
+        if series_url:
+            series_key = (await nhk.resolve_series_code(series_url)) or ""
+    if not series_key:
+        series_key = (request.query.get("series_id") or "").strip()
     if not series_key:
         return web.json_response([])
     try:
-        events = await request.app["nhk"].fetch_events(series_key)
+        events = await nhk.fetch_events(series_key)
         if DEBUG_LOG:
             logger.info(
                 "[debug] /api/events: series_key=%s lookahead_days=%s -> %d rows",
@@ -580,6 +582,18 @@ async def api_events(request: web.Request) -> web.Response:
 
 async def api_reservations_get(request: web.Request) -> web.Response:
     return web.json_response(read_json(RESERVATIONS_FILE))
+
+
+async def api_series_resolve(request: web.Request) -> web.Response:
+    series_url = (request.query.get("series_url") or "").strip()
+    if not series_url:
+        return web.json_response({"seriesCode": None})
+    try:
+        series_code = await request.app["nhk"].resolve_series_code(series_url)
+        return web.json_response({"seriesCode": series_code})
+    except Exception as exc:
+        logger.warning("series resolve failed: %s", exc)
+        return web.json_response({"seriesCode": None})
 
 
 async def api_reservations_post(request: web.Request) -> web.Response:
@@ -711,6 +725,7 @@ async def create_app() -> web.Application:
     app.router.add_static("/recordings", RECORDINGS_DIR)
 
     app.router.add_get("/api/series", api_series)
+    app.router.add_get("/api/series/resolve", api_series_resolve)
     app.router.add_get("/api/events", api_events)
     app.router.add_get("/api/reservations", api_reservations_get)
     app.router.add_post("/api/reservations", api_reservations_post)
