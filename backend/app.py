@@ -29,6 +29,7 @@ SERIES_URL_TMPL = "https://www.nhk.or.jp/radio-api/app/v1/web/series?kana={kana}
 SERIES_KANA_LIST = ("a", "k", "s", "t", "n", "h", "m", "y", "r", "w")
 EVENT_URL_TMPL = "https://api.nhk.jp/r7/f/broadcastevent/rs/{series_key}.json?offset=0&size=10&to={to_time}&status=scheduled"
 CONFIG_URL = "https://www.nhk.or.jp/radio/config/config_web.xml"
+SERIES_CACHE_TTL = timedelta(hours=1)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("nhk-recorder")
@@ -430,12 +431,12 @@ def build_metadata_tags(event: dict[str, Any]) -> dict[str, str]:
 async def api_series(request: web.Request) -> web.Response:
     cache = request.app["series_cache"]
     now = utc_now()
-    if cache["value"] and cache["expires_at"] > now:
+    if cache["value"] is not None and cache["expires_at"] > now:
         return web.json_response(cache["value"])
     try:
         data = await request.app["nhk"].fetch_series()
         cache["value"] = data
-        cache["expires_at"] = now + timedelta(hours=6)
+        cache["expires_at"] = now + SERIES_CACHE_TTL
         return web.json_response(data)
     except Exception as exc:
         logger.warning("series fetch failed: %s", exc)
