@@ -13,7 +13,11 @@ function fmt(v) {
 
 async function loadSeries() {
   const list = await (await api('/api/series')).json();
-  seriesCache = list.sort((a, b) => (a.areaName || '').localeCompare(b.areaName || '') || a.title.localeCompare(b.title));
+  const rows = Array.isArray(list) ? list : [];
+  seriesCache = rows.sort((a, b) =>
+    (a?.areaName || '').localeCompare(b?.areaName || '') ||
+    (a?.title || '').localeCompare(b?.title || '')
+  );
   renderSeries();
 }
 
@@ -24,10 +28,14 @@ function renderSeries() {
   const ul = document.querySelector('#seriesList');
   ul.innerHTML = '';
   seriesCache
-    .filter(s => (!keyword || s.title.toLowerCase().includes(keyword)) && (!area || (s.areaName || '').toLowerCase().includes(area)) && (!broadcast || s.broadcasts.includes(broadcast)))
+    .filter(s =>
+      (!keyword || (s?.title || '').toLowerCase().includes(keyword)) &&
+      (!area || (s?.areaName || '').toLowerCase().includes(area)) &&
+      (!broadcast || (s?.broadcasts || []).includes(broadcast))
+    )
     .forEach(s => {
       const li = document.createElement('li');
-      li.innerHTML = `<b>${s.title}</b> <span class="small">[${(s.areaName || 'N/A')} / ${(s.broadcasts || []).join(',')}]</span>
+      li.innerHTML = `<b>${s.title || 'Untitled'}</b> <span class="small">[${(s.areaName || 'N/A')} / ${(s.broadcasts || []).join(',')}]</span>
         <div class="small">${s.scheduleText || ''}</div>
         <div class="actions">
           <button data-sid="${s.id}" class="show-events">Show events</button>
