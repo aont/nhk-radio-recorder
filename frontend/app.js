@@ -29,14 +29,13 @@ async function loadSeries() {
 
 function renderSeries() {
   const keyword = document.querySelector('#keyword').value.toLowerCase();
-  const area = document.querySelector('#areaFilter').value.toLowerCase();
   const broadcast = document.querySelector('#broadcastFilter').value;
   const ul = document.querySelector('#seriesList');
   ul.innerHTML = '';
-  debugLog('renderSeries filters', { keyword, area, broadcast, total: seriesCache.length });
+  debugLog('renderSeries filters', { keyword, broadcast, total: seriesCache.length });
   let rendered = 0;
   seriesCache
-    .filter(s => (!keyword || s.title.toLowerCase().includes(keyword)) && (!area || (s.areaName || '').toLowerCase().includes(area)) && (!broadcast || s.broadcasts.includes(broadcast)))
+    .filter(s => (!keyword || s.title.toLowerCase().includes(keyword)) && (!broadcast || s.broadcasts.includes(broadcast)))
     .forEach(s => {
       const li = document.createElement('li');
       li.innerHTML = `<b>${s.title}</b> <span class="small">[${(s.areaName || 'N/A')} / ${(s.broadcasts || []).join(',')}]</span>
@@ -89,7 +88,7 @@ async function reserveEvent(event) {
 }
 
 async function reserveSeries(seriesId, seriesCode) {
-  const areaId = prompt('Optional area_id filter for watcher (blank for all):', '') || '';
+  const areaId = '';
   debugLog('reserveSeries', { seriesId, seriesCode, areaId });
   await api('/api/reservations', {
     method: 'POST',
@@ -189,7 +188,6 @@ async function bulkDownload() {
 
 document.querySelector('#loadSeries').onclick = loadSeries;
 document.querySelector('#keyword').oninput = renderSeries;
-document.querySelector('#areaFilter').oninput = renderSeries;
 document.querySelector('#broadcastFilter').onchange = renderSeries;
 document.querySelector('#refreshReservations').onclick = loadReservations;
 document.querySelector('#refreshRecordings').onclick = loadRecordings;
