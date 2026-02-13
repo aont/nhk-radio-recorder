@@ -1,6 +1,7 @@
 let seriesCache = [];
 let selectedSeries = null;
 const seriesCodeByUrl = new Map();
+const expandedReservationGroups = new Set();
 const DEBUG_LOG = ['1', 'true', 'yes', 'on'].includes((new URLSearchParams(window.location.search).get('debug') || localStorage.getItem('debugLog') || '').toLowerCase());
 
 function debugLog(...args) {
@@ -191,18 +192,60 @@ async function loadReservations() {
   debugLog('loadReservations count', rows.length);
   const ul = document.querySelector('#reservationList');
   ul.innerHTML = '';
-  rows.forEach(r => {
-    const li = document.createElement('li');
-    const event = r.payload?.event || {};
-    const metadataHtml = r.type === 'series_watch'
-      ? renderSeriesWatchMetadata(r.payload)
-      : renderReservationMetadata(r.payload?.metadata);
-    li.innerHTML = `<b>${r.type}</b> <span class="small">${r.status} / ${r.id}</span>
-      ${event.name ? `<div class="small"><b>${escapeHtml(event.name)}</b> (${fmt(event.startDate)} - ${fmt(event.endDate)})</div>` : ''}
-      ${metadataHtml || `<div class="small">${escapeHtml(JSON.stringify(r.payload))}</div>`}
-      <div class="actions"><button data-rid="${r.id}" class="delete-reservation">Delete</button></div>`;
-    ul.appendChild(li);
+
+  const groups = new Map();
+  rows.forEach((row) => {
+    const group = buildReservationGroup(row);
+    if (!groups.has(group.key)) groups.set(group.key, { title: group.title, rows: [] });
+    groups.get(group.key).rows.push(row);
   });
+
+  [...groups.entries()].forEach(([groupKey, group]) => {
+    const container = document.createElement('li');
+    container.className = 'reservation-group';
+    const isExpanded = expandedReservationGroups.has(groupKey);
+    const visibleRows = isExpanded ? group.rows : group.rows.slice(0, 1);
+    const moreCount = Math.max(0, group.rows.length - visibleRows.length);
+    container.innerHTML = `<div class="reservation-group-header">
+      <div>
+        <b>${escapeHtml(group.title)}</b>
+        <span class="small">(${group.rows.length} item${group.rows.length > 1 ? 's' : ''})</span>
+        ${!isExpanded && moreCount > 0 ? `<div class="small">+${moreCount} more in this series</div>` : ''}
+      </div>
+      ${group.rows.length > 1 ? `<button class="toggle-reservation-group" data-group="${escapeHtml(groupKey)}">${isExpanded ? 'Collapse' : 'Expand'}</button>` : ''}
+    </div>`;
+
+    const itemList = document.createElement('ul');
+    itemList.className = 'reservation-items';
+    visibleRows.forEach((row) => itemList.appendChild(renderReservationItem(row)));
+    container.appendChild(itemList);
+    ul.appendChild(container);
+  });
+}
+
+function buildReservationGroup(row) {
+  const metadata = row.payload?.metadata || {};
+  const seriesCode = metadata.series_code || row.payload?.series_code || row.payload?.event?.radioSeriesId || '';
+  const seriesId = metadata.series_id || row.payload?.series_id || row.payload?.event?.radioSeriesId || '';
+  const seriesTitle = metadata.series_title || row.payload?.series_title || row.payload?.event?.seriesTitle || '';
+  const identifier = seriesCode || seriesId || row.id;
+  return {
+    key: `series:${identifier}`,
+    title: seriesTitle || `Series ${identifier}`
+  };
+}
+
+function renderReservationItem(row) {
+  const li = document.createElement('li');
+  const event = row.payload?.event || {};
+  const metadataHtml = row.type === 'series_watch'
+    ? renderSeriesWatchMetadata(row.payload)
+    : renderReservationMetadata(row.payload?.metadata);
+  li.innerHTML = `<b>${row.type}</b> <span class="small">${row.status} / ${row.id}</span>
+    ${event.name ? `<div class="small"><b>${escapeHtml(event.name)}</b> (${fmt(event.startDate)} - ${fmt(event.endDate)})</div>` : ''}
+    ${metadataHtml || `<div class="small">${escapeHtml(JSON.stringify(row.payload))}</div>`}
+    <div class="actions"><button data-rid="${row.id}" class="delete-reservation">Delete</button></div>`;
+  return li;
 }
 
 async function loadRecordings() {
@@ -283,6 +326,13 @@ document.addEventListener('click', async (e) => {
   if (e.target.matches('.watch-series')) await reserveSeries(e.target.dataset.sid, e.target.dataset.scode, e.target.dataset.surl);
   if (e.target.matches('.delete-reservation')) {
     await api(`/api/reservations/${e.target.dataset.rid}`, { method: 'DELETE' });
+    await loadReservations();
+  }
+  if (e.target.matches('.toggle-reservation-group')) {
+    const group = e.target.dataset.group;
+    if (!group) return;
+    if (expandedReservationGroups.has(group)) expandedReservationGroups.delete(group);
+    else expandedReservationGroups.add(group);
     await loadReservations();
   }
   if (e.target.matches('.play')) playRecording(e.target.dataset.rec);
