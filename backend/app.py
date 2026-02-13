@@ -24,7 +24,8 @@ FRONTEND_DIR = BASE_DIR / "frontend"
 RESERVATIONS_FILE = DATA_DIR / "reservations.json"
 RECORDINGS_FILE = DATA_DIR / "recordings.json"
 
-SERIES_URL = "https://www.nhk.or.jp/radio-api/app/v1/web/series?block=all"
+SERIES_URL_TMPL = "https://www.nhk.or.jp/radio-api/app/v1/web/series?kana={kana}"
+SERIES_KANA_LIST = ("a", "k", "s", "t", "n", "h", "m", "y", "r", "w")
 EVENT_URL_TMPL = "https://api.nhk.jp/r7/f/broadcastevent/rs/{series_id}.json?to={to_time}&status=scheduled"
 CONFIG_URL = "https://www.nhk.or.jp/radio/config/config_web.xml"
 
@@ -117,28 +118,37 @@ class NHKClient:
         raise RuntimeError("unreachable")
 
     async def fetch_series(self) -> list[dict[str, Any]]:
-        headers = {
-            "accept": "application/json, text/javascript, */*; q=0.01",
-            "x-requested-with": "XMLHttpRequest",
-            "Referer": "https://www.nhk.or.jp/radio/programs/local.html?region=all",
-        }
-        _, payload = await self._get_json(SERIES_URL, headers)
-        out = []
-        for item in payload.get("series", []):
-            if not all(k in item and str(item[k]).strip() for k in ("id", "title", "url", "radio_broadcast")):
-                continue
-            broadcasts = [x.strip() for x in str(item["radio_broadcast"]).split(",") if x.strip()]
-            out.append(
-                {
-                    "id": int(item["id"]),
-                    "title": str(item["title"]).strip(),
-                    "broadcasts": broadcasts,
-                    "url": str(item["url"]).strip(),
-                    "thumbnailUrl": (item.get("thumbnail_url") or "").strip() or None,
-                    "scheduleText": (item.get("schedule") or "").strip() or None,
-                    "areaName": (item.get("area") or "").strip() or None,
-                }
-            )
+        out: list[dict[str, Any]] = []
+        seen_ids: set[int] = set()
+        for kana in SERIES_KANA_LIST:
+            headers = {
+                "accept": "application/json, text/javascript, */*; q=0.01",
+                "sec-ch-ua": '"Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"',
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"Windows"',
+                "x-requested-with": "XMLHttpRequest",
+                "Referer": f"https://www.nhk.or.jp/radio/programs/index.html?kana={kana}",
+            }
+            _, payload = await self._get_json(SERIES_URL_TMPL.format(kana=kana), headers)
+            for item in payload.get("series", []):
+                if not all(k in item and str(item[k]).strip() for k in ("id", "title", "url", "radio_broadcast")):
+                    continue
+                series_id = int(item["id"])
+                if series_id in seen_ids:
+                    continue
+                seen_ids.add(series_id)
+                broadcasts = [x.strip() for x in str(item["radio_broadcast"]).split(",") if x.strip()]
+                out.append(
+                    {
+                        "id": series_id,
+                        "title": str(item["title"]).strip(),
+                        "broadcasts": broadcasts,
+                        "url": str(item["url"]).strip(),
+                        "thumbnailUrl": (item.get("thumbnail_url") or "").strip() or None,
+                        "scheduleText": (item.get("schedule") or "").strip() or None,
+                        "areaName": (item.get("area") or "").strip() or None,
+                    }
+                )
         return out
 
     async def fetch_events(self, series_id: int, to_days: int = 1) -> list[dict[str, Any]]:
