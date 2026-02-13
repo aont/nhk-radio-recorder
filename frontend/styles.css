@@ -22,3 +22,9 @@ audio { width: 100%; background: #f0f2f7; }
 .reservation-group-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .reservation-items { margin-top: 8px; padding-left: 10px; border-left: 2px solid #eef2fb; max-height: none; }
 .reservation-items > li:last-child { border-bottom: 0; }
+
+#seriesWatchReservationList,
+#singleEventReservationList {
+  max-height: none;
+  overflow: visible;
+}
