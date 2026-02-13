@@ -16,3 +16,5 @@ audio { width: 100%; background: #f0f2f7; }
   width: 100%;
   box-sizing: border-box;
 }
+
+.small a { word-break: break-all; }

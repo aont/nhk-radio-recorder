@@ -202,15 +202,34 @@ class NHKClient:
             except ValueError:
                 continue
             dd = {k: str(v).strip() for k, v in (ev.get("detailedDescription") or {}).items() if str(v).strip()}
+            about = ev.get("about") or {}
+            part_of_series = about.get("partOfSeries") or {}
+            genres = [
+                g.get("name2") or g.get("name1")
+                for g in ig.get("genre", [])
+                if isinstance(g, dict) and (g.get("name1") or g.get("name2"))
+            ]
             out.append(
                 {
                     "name": ev.get("name", "Untitled"),
                     "description": ev.get("description"),
                     "startDate": start_dt.isoformat(),
                     "endDate": end_dt.isoformat(),
+                    "duration": ev.get("duration"),
                     "broadcastEventId": ig.get("broadcastEventId"),
                     "serviceId": ig.get("serviceId"),
                     "areaId": ig.get("areaId"),
+                    "serviceName": ((ev.get("publishedOn") or {}).get("name") or None),
+                    "serviceDisplayName": ((ev.get("publishedOn") or {}).get("broadcastDisplayName") or None),
+                    "location": ((ev.get("location") or {}).get("name") or None),
+                    "eventUrl": ev.get("url") or None,
+                    "episodeApiUrl": about.get("url") or None,
+                    "episodeUrl": about.get("canonical") or None,
+                    "seriesApiUrl": part_of_series.get("url") or None,
+                    "seriesUrl": part_of_series.get("canonical") or None,
+                    "radioEpisodeId": ig.get("radioEpisodeId"),
+                    "radioSeriesId": ig.get("radioSeriesId"),
+                    "genres": genres,
                     "detailedDescription": dd,
                     "musicList": ((ev.get("misc") or {}).get("musicList") or []),
                 }

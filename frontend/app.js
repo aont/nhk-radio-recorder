@@ -19,6 +19,28 @@ function fmt(v) {
   return v ? new Date(v).toLocaleString() : "";
 }
 
+function fmtDuration(v) {
+  if (!v || typeof v !== 'string' || !v.startsWith('PT')) return v || '';
+  const m = v.match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/);
+  if (!m) return v;
+  const parts = [];
+  if (m[1]) parts.push(`${Number(m[1])}h`);
+  if (m[2]) parts.push(`${Number(m[2])}m`);
+  if (m[3]) parts.push(`${Number(m[3])}s`);
+  return parts.join(' ') || v;
+}
+
+function escapeHtml(text) {
+  const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  return String(text ?? '').replace(/[&<>"']/g, (ch) => map[ch]);
+}
+
+function linkRow(label, url) {
+  if (!url) return '';
+  const safeUrl = escapeHtml(url);
+  return `<div class="small"><b>${escapeHtml(label)}:</b> <a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeUrl}</a></div>`;
+}
+
 async function loadSeries() {
   const list = await (await api('/api/series')).json();
   debugLog('loadSeries raw count', list.length);
@@ -61,8 +83,16 @@ async function showEvents(seriesId, seriesCode) {
   ul.innerHTML = '';
   for (const ev of events) {
     const li = document.createElement('li');
-    li.innerHTML = `<b>${ev.name}</b>
-      <div class="small">${fmt(ev.startDate)} - ${fmt(ev.endDate)} / ${ev.serviceId} / area:${ev.areaId}</div>`;
+    li.innerHTML = `<b>${escapeHtml(ev.name)}</b>
+      <div class="small">${fmt(ev.startDate)} - ${fmt(ev.endDate)} / ${escapeHtml(ev.serviceDisplayName || ev.serviceName || ev.serviceId || 'N/A')} / area:${escapeHtml(ev.areaId || '-')}</div>
+      <div class="small">Duration: ${escapeHtml(fmtDuration(ev.duration) || '-')} / Location: ${escapeHtml(ev.location || '-')}</div>
+      <div class="small">Series ID: ${escapeHtml(ev.radioSeriesId || '-')} / Episode ID: ${escapeHtml(ev.radioEpisodeId || '-')}</div>
+      ${ev.genres?.length ? `<div class="small">Genres: ${escapeHtml(ev.genres.join(', '))}</div>` : ''}
+      ${ev.description ? `<div class="small">${escapeHtml(ev.description)}</div>` : ''}
+      ${linkRow('Program URL', ev.episodeUrl || ev.seriesUrl)}
+      ${linkRow('Broadcast Event API', ev.eventUrl)}
+      ${linkRow('Episode API', ev.episodeApiUrl)}
+      ${linkRow('Series API', ev.seriesApiUrl)}`;
     const actions = document.createElement('div');
     actions.className = 'actions';
     const btn = document.createElement('button');
