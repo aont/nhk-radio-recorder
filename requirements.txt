@@ -1,1 +1,2 @@
 aiohttp==3.10.11
+sleep-absolute @ git+https://github.com/aont/python-sleep-absolute.git@7001952b26fcb2a446d128321d995841e50f3541

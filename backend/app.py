@@ -18,6 +18,7 @@ from typing import Any
 from xml.etree import ElementTree
 
 from aiohttp import ClientSession, ClientTimeout, web
+from sleep_absolute import wait_until
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
@@ -323,6 +324,7 @@ class RecorderService:
     def __init__(self, app: web.Application):
         self.app = app
         self.loop_task: asyncio.Task | None = None
+        self.active_recording_tasks: dict[str, asyncio.Task] = {}
 
     async def start(self) -> None:
         self.loop_task = asyncio.create_task(self.scheduler_loop())
@@ -332,6 +334,12 @@ class RecorderService:
             self.loop_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self.loop_task
+        for task in self.active_recording_tasks.values():
+            task.cancel()
+        if self.active_recording_tasks:
+            with contextlib.suppress(asyncio.CancelledError):
+                await asyncio.gather(*self.active_recording_tasks.values())
+        self.active_recording_tasks.clear()
 
     async def scheduler_loop(self) -> None:
         last_series_expand = datetime.min.replace(tzinfo=timezone.utc)
@@ -387,22 +395,31 @@ class RecorderService:
 
     async def _run_due_recordings(self) -> None:
         reservations = read_json(RESERVATIONS_FILE)
-        now = utc_now()
         changed = False
         for r in reservations:
-            if r["type"] != "single_event" or r["status"] != "pending":
+            if r["type"] != "single_event" or r["status"] not in {"pending", "scheduled"}:
                 continue
             event = r["payload"]["event"]
             start_dt = datetime.fromisoformat(event["startDate"])
             if start_dt.tzinfo is None:
                 start_dt = start_dt.replace(tzinfo=timezone.utc)
-            if start_dt > now:
+            if r["id"] in self.active_recording_tasks:
                 continue
-            r["status"] = "scheduled"
-            changed = True
-            asyncio.create_task(self.execute_recording(r))
+            if r["status"] == "pending":
+                r["status"] = "scheduled"
+                changed = True
+            task = asyncio.create_task(self._wait_and_execute_recording(r, start_dt))
+            self.active_recording_tasks[r["id"]] = task
         if changed:
             write_json(RESERVATIONS_FILE, reservations)
+
+    async def _wait_and_execute_recording(self, reservation: dict[str, Any], start_dt: datetime) -> None:
+        try:
+            if start_dt > utc_now():
+                await wait_until(start_dt)
+            await self.execute_recording(reservation)
+        finally:
+            self.active_recording_tasks.pop(reservation["id"], None)
 
     async def execute_recording(self, reservation: dict[str, Any]) -> None:
         event = reservation["payload"]["event"]
