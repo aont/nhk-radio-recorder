@@ -32,6 +32,7 @@ SERIES_KANA_LIST = ("a", "k", "s", "t", "n", "h", "m", "y", "r", "w")
 EVENT_URL_TMPL = "https://api.nhk.jp/r7/f/broadcastevent/rs/{series_key}.json?offset=0&size=10&to={to_time}&status=scheduled"
 CONFIG_URL = "https://www.nhk.or.jp/radio/config/config_web.xml"
 SERIES_CACHE_TTL = timedelta(hours=1)
+SERIES_WATCH_EXPAND_INTERVAL_SECONDS = 60 * 60
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("nhk-recorder")
@@ -337,9 +338,13 @@ class RecorderService:
                 await self.loop_task
 
     async def scheduler_loop(self) -> None:
+        last_series_expand = datetime.min.replace(tzinfo=timezone.utc)
         while True:
             try:
-                await self._expand_series_watchers()
+                now = utc_now()
+                if (now - last_series_expand).total_seconds() >= SERIES_WATCH_EXPAND_INTERVAL_SECONDS:
+                    await self._expand_series_watchers()
+                    last_series_expand = now
                 await self._run_due_recordings()
             except Exception as exc:
                 logger.exception("Scheduler error: %s", exc)
@@ -597,6 +602,12 @@ async def api_reservations_post(request: web.Request) -> web.Response:
     reservations = read_json(RESERVATIONS_FILE)
     reservations.append(asdict(reservation))
     write_json(RESERVATIONS_FILE, reservations)
+
+    if payload.get("type") == "series_watch":
+        recorder = request.app.get("recorder")
+        if recorder:
+            await recorder._expand_series_watchers()
+
     return web.json_response(asdict(reservation))
 
 
@@ -706,17 +717,13 @@ async def create_app() -> web.Application:
     app.router.add_delete("/api/recordings/{recording_id}", api_recordings_delete)
 
     recorder = RecorderService(app)
+    app["recorder"] = recorder
 
     async def on_startup(_: web.Application) -> None:
-        recorder.loop_task = asyncio.create_task(recorder.scheduler_loop())
+        await recorder.start()
 
     async def on_cleanup(_: web.Application) -> None:
-        if recorder.loop_task:
-            recorder.loop_task.cancel()
-            try:
-                await recorder.loop_task
-            except asyncio.CancelledError:
-                pass
+        await recorder.stop()
         await session.close()
 
     app.on_startup.append(on_startup)
