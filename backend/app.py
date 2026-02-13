@@ -12,6 +12,7 @@ import zipfile
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 from typing import Any
 from xml.etree import ElementTree
 
@@ -26,7 +27,7 @@ RECORDINGS_FILE = DATA_DIR / "recordings.json"
 
 SERIES_URL_TMPL = "https://www.nhk.or.jp/radio-api/app/v1/web/series?kana={kana}"
 SERIES_KANA_LIST = ("a", "k", "s", "t", "n", "h", "m", "y", "r", "w")
-EVENT_URL_TMPL = "https://api.nhk.jp/r7/f/broadcastevent/rs/{series_id}.json?to={to_time}&status=scheduled"
+EVENT_URL_TMPL = "https://api.nhk.jp/r7/f/broadcastevent/rs/{series_key}.json?offset=0&size=10&to={to_time}&status=scheduled"
 CONFIG_URL = "https://www.nhk.or.jp/radio/config/config_web.xml"
 
 logging.basicConfig(level=logging.INFO)
@@ -86,6 +87,11 @@ def write_json(path: Path, payload: list[dict[str, Any]]) -> None:
 class NHKClient:
     def __init__(self, session: ClientSession):
         self.session = session
+
+    @staticmethod
+    def extract_series_key(url: str) -> str | None:
+        parts = [p for p in urlparse(url).path.split("/") if p]
+        return parts[-1] if parts else None
 
     async def _get_json(self, url: str, headers: dict[str, str] | None = None) -> Any:
         retries = [0.5, 1.5]
@@ -150,12 +156,14 @@ class NHKClient:
                     continue
                 seen_ids.add(series_id)
                 broadcasts = [x.strip() for x in str(item["radio_broadcast"]).split(",") if x.strip()]
+                series_url = str(item["url"]).strip()
                 out.append(
                     {
                         "id": series_id,
                         "title": str(item["title"]).strip(),
                         "broadcasts": broadcasts,
-                        "url": str(item["url"]).strip(),
+                        "url": series_url,
+                        "seriesCode": self.extract_series_key(series_url),
                         "thumbnailUrl": (item.get("thumbnail_url") or "").strip() or None,
                         "scheduleText": (item.get("schedule") or "").strip() or None,
                         "areaName": (item.get("area") or "").strip() or None,
@@ -165,14 +173,14 @@ class NHKClient:
             logger.info("[debug] fetch_series: %d rows", len(out))
         return out
 
-    async def fetch_events(self, series_id: int, to_days: int = 1) -> list[dict[str, Any]]:
+    async def fetch_events(self, series_key: str, to_days: int = 1) -> list[dict[str, Any]]:
         to_time = (datetime.now() + timedelta(days=to_days)).strftime("%Y-%m-%dT%H:%M")
-        url = EVENT_URL_TMPL.format(series_id=series_id, to_time=to_time)
+        url = EVENT_URL_TMPL.format(series_key=series_key, to_time=to_time)
         status, payload = await self._get_json(url)
         if DEBUG_LOG:
             logger.info(
-                "[debug] fetch_events: series_id=%s to_days=%s to_time=%s status=%s result_count=%s",
-                series_id,
+                "[debug] fetch_events: series_key=%s to_days=%s to_time=%s status=%s result_count=%s",
+                series_key,
                 to_days,
                 to_time,
                 status,
@@ -269,7 +277,8 @@ class RecorderService:
                 continue
             payload = r["payload"]
             seen = set(payload.setdefault("seen_broadcast_event_ids", []))
-            events = await self.app["nhk"].fetch_events(int(payload["series_id"]))
+            series_key = str(payload.get("series_code") or payload["series_id"])
+            events = await self.app["nhk"].fetch_events(series_key)
             for ev in events:
                 beid = ev.get("broadcastEventId")
                 if not beid or beid in seen:
@@ -436,12 +445,14 @@ async def api_series(request: web.Request) -> web.Response:
 
 
 async def api_events(request: web.Request) -> web.Response:
-    sid = int(request.query["series_id"])
+    series_key = (request.query.get("series_code") or request.query.get("series_id") or "").strip()
+    if not series_key:
+        return web.json_response([])
     to_days = int(request.query.get("to_days", "1"))
     try:
-        events = await request.app["nhk"].fetch_events(sid, to_days)
+        events = await request.app["nhk"].fetch_events(series_key, to_days)
         if DEBUG_LOG:
-            logger.info("[debug] /api/events: series_id=%s to_days=%s -> %d rows", sid, to_days, len(events))
+            logger.info("[debug] /api/events: series_key=%s to_days=%s -> %d rows", series_key, to_days, len(events))
         return web.json_response(events)
     except Exception as exc:
         logger.warning("event fetch failed: %s", exc)
