@@ -312,7 +312,13 @@ class RecorderService:
                             type="single_event",
                             created_at=utc_now().isoformat(),
                             status="pending",
-                            payload={"series_id": payload["series_id"], "event": ev, "from_series_watch": r["id"]},
+                            payload={
+                                "series_id": payload["series_id"],
+                                "series_code": payload.get("series_code"),
+                                "event": ev,
+                                "from_series_watch": r["id"],
+                                "metadata": build_reservation_metadata(payload["series_id"], payload.get("series_code"), ev),
+                            },
                         )
                     )
                 )
@@ -447,6 +453,20 @@ def build_metadata_tags(event: dict[str, Any]) -> dict[str, str]:
     return tags
 
 
+def build_reservation_metadata(series_id: Any, series_code: Any, event: dict[str, Any]) -> dict[str, str]:
+    return {
+        "series_id": str(series_id or ""),
+        "series_code": str(series_code or ""),
+        "broadcast_event_id": str(event.get("broadcastEventId") or ""),
+        "radio_series_id": str(event.get("radioSeriesId") or ""),
+        "radio_episode_id": str(event.get("radioEpisodeId") or ""),
+        "program_url": str(event.get("episodeUrl") or event.get("seriesUrl") or ""),
+        "broadcast_event_info_url": str(event.get("eventUrl") or ""),
+        "episode_api_url": str(event.get("episodeApiUrl") or ""),
+        "series_api_url": str(event.get("seriesApiUrl") or ""),
+    }
+
+
 async def api_series(request: web.Request) -> web.Response:
     cache = request.app["series_cache"]
     now = utc_now()
@@ -485,6 +505,13 @@ async def api_reservations_get(request: web.Request) -> web.Response:
 
 async def api_reservations_post(request: web.Request) -> web.Response:
     payload = await request.json()
+    if payload.get("type") == "single_event":
+        reservation_payload = payload.setdefault("payload", {})
+        reservation_payload["metadata"] = build_reservation_metadata(
+            reservation_payload.get("series_id"),
+            reservation_payload.get("series_code"),
+            reservation_payload.get("event") or {},
+        )
     reservation = Reservation(
         id=str(uuid.uuid4()),
         type=payload["type"],

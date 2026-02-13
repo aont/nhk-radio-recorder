@@ -41,6 +41,25 @@ function linkRow(label, url) {
   return `<div class="small"><b>${escapeHtml(label)}:</b> <a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeUrl}</a></div>`;
 }
 
+function renderReservationMetadata(meta) {
+  if (!meta || typeof meta !== 'object') return '';
+  const rows = [
+    ['Series ID', meta.series_id],
+    ['Series Code', meta.series_code],
+    ['Broadcast Event ID', meta.broadcast_event_id],
+    ['Radio Series ID', meta.radio_series_id],
+    ['Radio Episode ID', meta.radio_episode_id]
+  ].filter(([, value]) => value);
+  const plainRows = rows.map(([label, value]) => `<div class="small"><b>${escapeHtml(label)}:</b> ${escapeHtml(value)}</div>`).join('');
+  return `
+    ${plainRows}
+    ${linkRow('Program URL', meta.program_url)}
+    ${linkRow('Broadcast Event Info URL', meta.broadcast_event_info_url)}
+    ${linkRow('Episode API URL', meta.episode_api_url)}
+    ${linkRow('Series API URL', meta.series_api_url)}
+  `;
+}
+
 async function loadSeries() {
   const list = await (await api('/api/series')).json();
   debugLog('loadSeries raw count', list.length);
@@ -143,8 +162,11 @@ async function loadReservations() {
   ul.innerHTML = '';
   rows.forEach(r => {
     const li = document.createElement('li');
+    const event = r.payload?.event || {};
+    const metadataHtml = renderReservationMetadata(r.payload?.metadata);
     li.innerHTML = `<b>${r.type}</b> <span class="small">${r.status} / ${r.id}</span>
-      <div class="small">${JSON.stringify(r.payload)}</div>
+      ${event.name ? `<div class="small"><b>${escapeHtml(event.name)}</b> (${fmt(event.startDate)} - ${fmt(event.endDate)})</div>` : ''}
+      ${metadataHtml || `<div class="small">${escapeHtml(JSON.stringify(r.payload))}</div>`}
       <div class="actions"><button data-rid="${r.id}" class="delete-reservation">Delete</button></div>`;
     ul.appendChild(li);
   });
