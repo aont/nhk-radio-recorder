@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NHK Radio Recorder</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+</head>
+<body>
+  <header>
+    <h1>NHK Radio Recorder</h1>
+  </header>
+
+  <main>
+    <section>
+      <h2>Series Browser</h2>
+      <div class="filters">
+        <input id="keyword" placeholder="Search title" />
+        <input id="areaFilter" placeholder="Area name" />
+        <select id="broadcastFilter">
+          <option value="">All broadcasts</option>
+          <option value="R1">R1</option>
+          <option value="FM">FM</option>
+        </select>
+        <button id="loadSeries">Load Series</button>
+      </div>
+      <ul id="seriesList"></ul>
+    </section>
+
+    <section>
+      <h2>Events</h2>
+      <div id="eventTarget">Select a series.</div>
+      <ul id="eventsList"></ul>
+    </section>
+
+    <section>
+      <h2>Reservations</h2>
+      <button id="refreshReservations">Refresh</button>
+      <ul id="reservationList"></ul>
+    </section>
+
+    <section>
+      <h2>Recordings</h2>
+      <button id="refreshRecordings">Refresh</button>
+      <button id="bulkDownload">Bulk Download Selected (ZIP no compression)</button>
+      <ul id="recordingList"></ul>
+      <h3>Player</h3>
+      <video id="player" controls></video>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
