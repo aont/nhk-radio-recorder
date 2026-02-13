@@ -190,15 +190,36 @@ async function reserveSeries(seriesId, seriesCode, seriesUrl) {
 async function loadReservations() {
   const rows = await (await api('/api/reservations')).json();
   debugLog('loadReservations count', rows.length);
-  const ul = document.querySelector('#reservationList');
-  ul.innerHTML = '';
+  const seriesWatchList = document.querySelector('#seriesWatchReservationList');
+  const singleEventList = document.querySelector('#singleEventReservationList');
+  seriesWatchList.innerHTML = '';
+  singleEventList.innerHTML = '';
 
-  const groups = new Map();
+  const groupedByType = {
+    series_watch: new Map(),
+    single_event: new Map()
+  };
+
   rows.forEach((row) => {
+    const type = row.type === 'series_watch' ? 'series_watch' : 'single_event';
     const group = buildReservationGroup(row);
-    if (!groups.has(group.key)) groups.set(group.key, { title: group.title, rows: [] });
-    groups.get(group.key).rows.push(row);
+    if (!groupedByType[type].has(group.key)) groupedByType[type].set(group.key, { title: group.title, rows: [] });
+    groupedByType[type].get(group.key).rows.push(row);
   });
+
+  renderReservationGroups(groupedByType.series_watch, seriesWatchList);
+  renderReservationGroups(groupedByType.single_event, singleEventList);
+}
+
+
+function renderReservationGroups(groups, ul) {
+  if (!groups.size) {
+    const empty = document.createElement('li');
+    empty.className = 'small';
+    empty.textContent = 'No reservations.';
+    ul.appendChild(empty);
+    return;
+  }
 
   [...groups.entries()].forEach(([groupKey, group]) => {
     const container = document.createElement('li');
@@ -230,7 +251,7 @@ function buildReservationGroup(row) {
   const seriesTitle = metadata.series_title || row.payload?.series_title || row.payload?.event?.seriesTitle || '';
   const identifier = seriesCode || seriesId || row.id;
   return {
-    key: `series:${identifier}`,
+    key: `${row.type || 'reservation'}:series:${identifier}`,
     title: seriesTitle || `Series ${identifier}`
   };
 }
