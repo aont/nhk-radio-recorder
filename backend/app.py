@@ -44,6 +44,43 @@ logger = logging.getLogger("nhk-recorder")
 DEBUG_LOG = os.getenv("DEBUG_LOG", "").lower() in {"1", "true", "yes", "on"}
 
 
+class AsyncRLock:
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._owner: asyncio.Task[Any] | None = None
+        self._count = 0
+
+    async def acquire(self) -> None:
+        current = asyncio.current_task()
+        if current is None:
+            raise RuntimeError("AsyncRLock must be used in an asyncio task")
+        if self._owner is current:
+            self._count += 1
+            return
+        await self._lock.acquire()
+        self._owner = current
+        self._count = 1
+
+    def release(self) -> None:
+        current = asyncio.current_task()
+        if current is None or self._owner is not current:
+            raise RuntimeError("AsyncRLock released by non-owner")
+        self._count -= 1
+        if self._count == 0:
+            self._owner = None
+            self._lock.release()
+
+    async def __aenter__(self) -> "AsyncRLock":
+        await self.acquire()
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        self.release()
+
+
+RECORDINGS_LOCK = AsyncRLock()
+
+
 @dataclass
 class Reservation:
     id: str
@@ -190,63 +227,64 @@ def list_recording_dirs() -> list[Path]:
 
 
 async def reconcile_recordings_index(db: aiosqlite.Connection) -> list[dict[str, Any]]:
-    recordings = await read_json(db, RECORDINGS_FILE)
-    by_id = {str(r.get("id")): r for r in recordings if isinstance(r, dict) and r.get("id")}
-    changed = False
-    recording_dirs = list_recording_dirs()
+    async with RECORDINGS_LOCK:
+        recordings = await read_json(db, RECORDINGS_FILE)
+        by_id = {str(r.get("id")): r for r in recordings if isinstance(r, dict) and r.get("id")}
+        changed = False
+        recording_dirs = list_recording_dirs()
 
-    if DEBUG_LOG:
-        logger.info(
-            "[debug] reconcile_recordings_index: indexed=%d dirs=%d",
-            len(by_id),
-            len(recording_dirs),
-        )
+        if DEBUG_LOG:
+            logger.info(
+                "[debug] reconcile_recordings_index: indexed=%d dirs=%d",
+                len(by_id),
+                len(recording_dirs),
+            )
 
-    for rec_dir in recording_dirs:
-        rec_id = rec_dir.name
-        if rec_id in by_id:
-            continue
+        for rec_dir in recording_dirs:
+            rec_id = rec_dir.name
+            if rec_id in by_id:
+                continue
 
-        manifest = rec_dir / "recording.m3u8"
-        segment_count = len([p for p in rec_dir.glob("*.ts") if p.is_file()])
-        debug_state_file = rec_dir / "recording_debug.json"
-        debug_state: dict[str, Any] = {}
-        if debug_state_file.exists():
-            with contextlib.suppress(Exception):
-                debug_state = json.loads(debug_state_file.read_text(encoding="utf-8"))
-        created_at = datetime.fromtimestamp(manifest.stat().st_mtime, timezone.utc).isoformat()
-        recordings.append(
-            asdict(
-                Recording(
-                    id=rec_id,
-                    created_at=created_at,
-                    status="ready",
-                    reservation_id=None,
-                    series_id=None,
-                    broadcast_event_id=None,
-                    title="Recovered recording",
-                    service_id="",
-                    area_id="",
-                    start_date="",
-                    end_date="",
-                    hls_manifest=f"/recordings/{rec_id}/recording.m3u8",
-                    metadata={"note": "Recovered from filesystem because index entry was missing."},
+            manifest = rec_dir / "recording.m3u8"
+            segment_count = len([p for p in rec_dir.glob("*.ts") if p.is_file()])
+            debug_state_file = rec_dir / "recording_debug.json"
+            debug_state: dict[str, Any] = {}
+            if debug_state_file.exists():
+                with contextlib.suppress(Exception):
+                    debug_state = json.loads(debug_state_file.read_text(encoding="utf-8"))
+            created_at = datetime.fromtimestamp(manifest.stat().st_mtime, timezone.utc).isoformat()
+            recordings.append(
+                asdict(
+                    Recording(
+                        id=rec_id,
+                        created_at=created_at,
+                        status="ready",
+                        reservation_id=None,
+                        series_id=None,
+                        broadcast_event_id=None,
+                        title="Recovered recording",
+                        service_id="",
+                        area_id="",
+                        start_date="",
+                        end_date="",
+                        hls_manifest=f"/recordings/{rec_id}/recording.m3u8",
+                        metadata={"note": "Recovered from filesystem because index entry was missing."},
+                    )
                 )
             )
-        )
-        changed = True
-        logger.warning(
-            "recovered recording index for %s (manifest_mtime=%s manifest_size=%s segment_count=%s debug_state=%s)",
-            rec_id,
-            created_at,
-            manifest.stat().st_size,
-            segment_count,
-            debug_state,
-        )
+            changed = True
+            logger.warning(
+                "recovered recording index for %s (manifest_mtime=%s manifest_size=%s segment_count=%s debug_state=%s)",
+                rec_id,
+                created_at,
+                manifest.stat().st_size,
+                segment_count,
+                debug_state,
+            )
 
-    if changed:
-        await write_json(db, RECORDINGS_FILE, recordings)
-    return recordings
+        if changed:
+            await write_json(db, RECORDINGS_FILE, recordings)
+        return recordings
 
 
 class NHKClient:
@@ -650,27 +688,28 @@ class RecorderService:
             return
 
         metadata = build_metadata_tags(event)
-        recordings = await read_json(self.app["db"], RECORDINGS_FILE)
-        recordings.append(
-            asdict(
-                Recording(
-                    id=rec_id,
-                    created_at=utc_now().isoformat(),
-                    status="ready",
-                    reservation_id=reservation["id"],
-                    series_id=reservation["payload"].get("series_id"),
-                    broadcast_event_id=event.get("broadcastEventId"),
-                    title=event.get("name", "Untitled"),
-                    service_id=service_id,
-                    area_id=event["areaId"],
-                    start_date=event["startDate"],
-                    end_date=event["endDate"],
-                    hls_manifest=f"/recordings/{rec_id}/recording.m3u8",
-                    metadata=metadata,
+        async with RECORDINGS_LOCK:
+            recordings = await read_json(self.app["db"], RECORDINGS_FILE)
+            recordings.append(
+                asdict(
+                    Recording(
+                        id=rec_id,
+                        created_at=utc_now().isoformat(),
+                        status="ready",
+                        reservation_id=reservation["id"],
+                        series_id=reservation["payload"].get("series_id"),
+                        broadcast_event_id=event.get("broadcastEventId"),
+                        title=event.get("name", "Untitled"),
+                        service_id=service_id,
+                        area_id=event["areaId"],
+                        start_date=event["startDate"],
+                        end_date=event["endDate"],
+                        hls_manifest=f"/recordings/{rec_id}/recording.m3u8",
+                        metadata=metadata,
+                    )
                 )
             )
-        )
-        await write_json(self.app["db"], RECORDINGS_FILE, recordings)
+            await write_json(self.app["db"], RECORDINGS_FILE, recordings)
         self._write_recording_debug_state(rec_dir, "index_written", {"recordings_count": len(recordings)})
         await self._mark_reservation(reservation["id"], "done")
         self._write_recording_debug_state(rec_dir, "reservation_done", {"reservation_id": reservation["id"]})
@@ -861,20 +900,22 @@ async def api_recordings_get(request: web.Request) -> web.Response:
 
 
 async def _recording_by_id(db: aiosqlite.Connection, rec_id: str) -> dict[str, Any] | None:
-    for rec in await read_json(db, RECORDINGS_FILE):
-        if rec["id"] == rec_id:
-            return rec
+    async with RECORDINGS_LOCK:
+        for rec in await read_json(db, RECORDINGS_FILE):
+            if rec["id"] == rec_id:
+                return rec
     return None
 
 
 async def api_recordings_patch_metadata(request: web.Request) -> web.Response:
     rec_id = request.match_info["recording_id"]
     payload = await request.json()
-    recordings = await read_json(request.app["db"], RECORDINGS_FILE)
-    for rec in recordings:
-        if rec["id"] == rec_id:
-            rec["metadata"].update({k: str(v) for k, v in payload.items()})
-    await write_json(request.app["db"], RECORDINGS_FILE, recordings)
+    async with RECORDINGS_LOCK:
+        recordings = await read_json(request.app["db"], RECORDINGS_FILE)
+        for rec in recordings:
+            if rec["id"] == rec_id:
+                rec["metadata"].update({k: str(v) for k, v in payload.items()})
+        await write_json(request.app["db"], RECORDINGS_FILE, recordings)
     return web.json_response({"ok": True})
 
 
@@ -921,8 +962,9 @@ async def api_recordings_delete(request: web.Request) -> web.Response:
     rec_id = request.match_info["recording_id"]
     rec_dir = RECORDINGS_DIR / rec_id
     shutil.rmtree(rec_dir, ignore_errors=True)
-    recordings = [r for r in await read_json(request.app["db"], RECORDINGS_FILE) if r["id"] != rec_id]
-    await write_json(request.app["db"], RECORDINGS_FILE, recordings)
+    async with RECORDINGS_LOCK:
+        recordings = [r for r in await read_json(request.app["db"], RECORDINGS_FILE) if r["id"] != rec_id]
+        await write_json(request.app["db"], RECORDINGS_FILE, recordings)
     return web.json_response({"ok": True})
 
 
