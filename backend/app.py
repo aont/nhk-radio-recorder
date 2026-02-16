@@ -214,79 +214,6 @@ async def write_json(db: aiosqlite.Connection, path: Path, payload: list[dict[st
     await _db_set_json(db, _db_key(path), payload)
 
 
-def list_recording_dirs() -> list[Path]:
-    if not RECORDINGS_DIR.exists():
-        return []
-    out: list[Path] = []
-    for rec_dir in RECORDINGS_DIR.iterdir():
-        if not rec_dir.is_dir():
-            continue
-        if (rec_dir / "recording.m3u8").exists():
-            out.append(rec_dir)
-    return out
-
-
-async def reconcile_recordings_index(db: aiosqlite.Connection) -> list[dict[str, Any]]:
-    async with RECORDINGS_LOCK:
-        recordings = await read_json(db, RECORDINGS_FILE)
-        by_id = {str(r.get("id")): r for r in recordings if isinstance(r, dict) and r.get("id")}
-        changed = False
-        recording_dirs = list_recording_dirs()
-
-        if DEBUG_LOG:
-            logger.info(
-                "[debug] reconcile_recordings_index: indexed=%d dirs=%d",
-                len(by_id),
-                len(recording_dirs),
-            )
-
-        for rec_dir in recording_dirs:
-            rec_id = rec_dir.name
-            if rec_id in by_id:
-                continue
-
-            manifest = rec_dir / "recording.m3u8"
-            segment_count = len([p for p in rec_dir.glob("*.ts") if p.is_file()])
-            debug_state_file = rec_dir / "recording_debug.json"
-            debug_state: dict[str, Any] = {}
-            if debug_state_file.exists():
-                with contextlib.suppress(Exception):
-                    debug_state = json.loads(debug_state_file.read_text(encoding="utf-8"))
-            created_at = datetime.fromtimestamp(manifest.stat().st_mtime, timezone.utc).isoformat()
-            recordings.append(
-                asdict(
-                    Recording(
-                        id=rec_id,
-                        created_at=created_at,
-                        status="ready",
-                        reservation_id=None,
-                        series_id=None,
-                        broadcast_event_id=None,
-                        title="Recovered recording",
-                        service_id="",
-                        area_id="",
-                        start_date="",
-                        end_date="",
-                        hls_manifest=f"/recordings/{rec_id}/recording.m3u8",
-                        metadata={"note": "Recovered from filesystem because index entry was missing."},
-                    )
-                )
-            )
-            changed = True
-            logger.warning(
-                "recovered recording index for %s (manifest_mtime=%s manifest_size=%s segment_count=%s debug_state=%s)",
-                rec_id,
-                created_at,
-                manifest.stat().st_size,
-                segment_count,
-                debug_state,
-            )
-
-        if changed:
-            await write_json(db, RECORDINGS_FILE, recordings)
-        return recordings
-
-
 class NHKClient:
     def __init__(self, session: ClientSession):
         self.session = session
@@ -896,7 +823,8 @@ async def api_reservations_delete(request: web.Request) -> web.Response:
 
 
 async def api_recordings_get(request: web.Request) -> web.Response:
-    return web.json_response(await reconcile_recordings_index(request.app["db"]))
+    async with RECORDINGS_LOCK:
+        return web.json_response(await read_json(request.app["db"], RECORDINGS_FILE))
 
 
 async def _recording_by_id(db: aiosqlite.Connection, rec_id: str) -> dict[str, Any] | None:
