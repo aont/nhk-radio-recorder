@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import argparse
 import contextlib
 import json
 import logging
-import os
 import re
 import shutil
 import tempfile
@@ -41,7 +41,7 @@ SERIES_WATCH_EXPAND_INTERVAL_SECONDS = 60 * 60
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("nhk-recorder")
-DEBUG_LOG = os.getenv("DEBUG_LOG", "").lower() in {"1", "true", "yes", "on"}
+DEBUG_LOG = False
 
 
 class AsyncRLock:
@@ -947,4 +947,19 @@ async def create_app() -> web.Application:
 
 
 if __name__ == "__main__":
-    web.run_app(create_app(), host="0.0.0.0", port=int(os.getenv("PORT", "8080")))
+    parser = argparse.ArgumentParser(description="NHK radio recorder backend server")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8080,
+        help="Port to bind the web server (default: 8080)",
+    )
+    parser.add_argument(
+        "--debug-log",
+        action="store_true",
+        help="Enable verbose debug logging for NHK fetch paths and /api/events",
+    )
+    args = parser.parse_args()
+
+    DEBUG_LOG = args.debug_log
+    web.run_app(create_app(), host="0.0.0.0", port=args.port)
