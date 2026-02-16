@@ -132,13 +132,27 @@ def reconcile_recordings_index() -> list[dict[str, Any]]:
     recordings = read_json(RECORDINGS_FILE)
     by_id = {str(r.get("id")): r for r in recordings if isinstance(r, dict) and r.get("id")}
     changed = False
+    recording_dirs = list_recording_dirs()
 
-    for rec_dir in list_recording_dirs():
+    if DEBUG_LOG:
+        logger.info(
+            "[debug] reconcile_recordings_index: indexed=%d dirs=%d",
+            len(by_id),
+            len(recording_dirs),
+        )
+
+    for rec_dir in recording_dirs:
         rec_id = rec_dir.name
         if rec_id in by_id:
             continue
 
         manifest = rec_dir / "recording.m3u8"
+        segment_count = len([p for p in rec_dir.glob("*.ts") if p.is_file()])
+        debug_state_file = rec_dir / "recording_debug.json"
+        debug_state: dict[str, Any] = {}
+        if debug_state_file.exists():
+            with contextlib.suppress(Exception):
+                debug_state = json.loads(debug_state_file.read_text(encoding="utf-8"))
         created_at = datetime.fromtimestamp(manifest.stat().st_mtime, timezone.utc).isoformat()
         recordings.append(
             asdict(
@@ -160,7 +174,14 @@ def reconcile_recordings_index() -> list[dict[str, Any]]:
             )
         )
         changed = True
-        logger.warning("recovered recording index for %s", rec_id)
+        logger.warning(
+            "recovered recording index for %s (manifest_mtime=%s manifest_size=%s segment_count=%s debug_state=%s)",
+            rec_id,
+            created_at,
+            manifest.stat().st_size,
+            segment_count,
+            debug_state,
+        )
 
     if changed:
         write_json(RECORDINGS_FILE, recordings)
@@ -477,13 +498,34 @@ class RecorderService:
         event = reservation["payload"]["event"]
         service_id = event["serviceId"]
         stream_key = "fm" if service_id == "r3" else service_id
+        logger.info(
+            "recording start: reservation_id=%s broadcast_event_id=%s service_id=%s area_id=%s start=%s end=%s",
+            reservation["id"],
+            event.get("broadcastEventId"),
+            service_id,
+            event.get("areaId"),
+            event.get("startDate"),
+            event.get("endDate"),
+        )
         catalogs = await self.app["nhk"].fetch_stream_catalog()
         catalog = catalogs.get(event["areaId"])
         if not catalog:
+            logger.error(
+                "recording failed before ffmpeg: reservation_id=%s reason=area_not_found area_id=%s available_keys=%s",
+                reservation["id"],
+                event["areaId"],
+                sorted(catalogs.keys()),
+            )
             await self._mark_reservation(reservation["id"], "failed")
             return
         stream_url = catalog["streams"].get(stream_key)
         if not stream_url:
+            logger.error(
+                "recording failed before ffmpeg: reservation_id=%s reason=stream_not_found stream_key=%s streams=%s",
+                reservation["id"],
+                stream_key,
+                sorted(catalog["streams"].keys()),
+            )
             await self._mark_reservation(reservation["id"], "failed")
             return
 
@@ -491,6 +533,19 @@ class RecorderService:
         rec_dir = RECORDINGS_DIR / rec_id
         rec_dir.mkdir(parents=True, exist_ok=True)
         manifest = rec_dir / "recording.m3u8"
+        self._write_recording_debug_state(
+            rec_dir,
+            "prepared",
+            {
+                "reservation_id": reservation["id"],
+                "broadcast_event_id": event.get("broadcastEventId"),
+                "service_id": service_id,
+                "stream_key": stream_key,
+                "stream_url": stream_url,
+                "start_date": event.get("startDate"),
+                "end_date": event.get("endDate"),
+            },
+        )
 
         end_dt = datetime.fromisoformat(event["endDate"])
         if end_dt.tzinfo is None:
@@ -513,7 +568,9 @@ class RecorderService:
             "0",
             str(manifest),
         ]
+        logger.info("recording ffmpeg start: reservation_id=%s rec_id=%s cmd=%s", reservation["id"], rec_id, cmd)
         proc = await asyncio.create_subprocess_exec(*cmd, stdin=PIPE)
+        self._write_recording_debug_state(rec_dir, "ffmpeg_started", {"pid": proc.pid, "command": cmd})
         if end_dt > utc_now():
             await wait_until(end_dt)
 
@@ -523,6 +580,8 @@ class RecorderService:
                 await proc.stdin.drain()
             proc.stdin.close()
         ret = await proc.wait()
+        self._write_recording_debug_state(rec_dir, "ffmpeg_finished", {"return_code": ret})
+        logger.info("recording ffmpeg finished: reservation_id=%s rec_id=%s return_code=%s", reservation["id"], rec_id, ret)
 
         if ret != 0:
             shutil.rmtree(rec_dir, ignore_errors=True)
@@ -551,7 +610,31 @@ class RecorderService:
             )
         )
         write_json(RECORDINGS_FILE, recordings)
+        self._write_recording_debug_state(rec_dir, "index_written", {"recordings_count": len(recordings)})
         await self._mark_reservation(reservation["id"], "done")
+        self._write_recording_debug_state(rec_dir, "reservation_done", {"reservation_id": reservation["id"]})
+        logger.info("recording completed: reservation_id=%s rec_id=%s", reservation["id"], rec_id)
+
+    def _write_recording_debug_state(self, rec_dir: Path, state: str, extra: dict[str, Any] | None = None) -> None:
+        payload: dict[str, Any] = {
+            "updated_at": utc_now().isoformat(),
+            "state": state,
+        }
+        if extra:
+            payload.update(extra)
+        debug_file = rec_dir / "recording_debug.json"
+        try:
+            if debug_file.exists():
+                current = json.loads(debug_file.read_text(encoding="utf-8"))
+                if isinstance(current, dict):
+                    current.update(payload)
+                    payload = current
+        except Exception:
+            logger.exception("failed to read recording debug state: %s", debug_file)
+        try:
+            debug_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            logger.exception("failed to write recording debug state: %s", debug_file)
 
     async def _mark_reservation(self, reservation_id: str, status: str) -> None:
         reservations = read_json(RESERVATIONS_FILE)
