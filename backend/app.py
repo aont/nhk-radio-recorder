@@ -116,6 +116,57 @@ def write_json(path: Path, payload: list[dict[str, Any]]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def list_recording_dirs() -> list[Path]:
+    if not RECORDINGS_DIR.exists():
+        return []
+    out: list[Path] = []
+    for rec_dir in RECORDINGS_DIR.iterdir():
+        if not rec_dir.is_dir():
+            continue
+        if (rec_dir / "recording.m3u8").exists():
+            out.append(rec_dir)
+    return out
+
+
+def reconcile_recordings_index() -> list[dict[str, Any]]:
+    recordings = read_json(RECORDINGS_FILE)
+    by_id = {str(r.get("id")): r for r in recordings if isinstance(r, dict) and r.get("id")}
+    changed = False
+
+    for rec_dir in list_recording_dirs():
+        rec_id = rec_dir.name
+        if rec_id in by_id:
+            continue
+
+        manifest = rec_dir / "recording.m3u8"
+        created_at = datetime.fromtimestamp(manifest.stat().st_mtime, timezone.utc).isoformat()
+        recordings.append(
+            asdict(
+                Recording(
+                    id=rec_id,
+                    created_at=created_at,
+                    status="ready",
+                    reservation_id=None,
+                    series_id=None,
+                    broadcast_event_id=None,
+                    title="Recovered recording",
+                    service_id="",
+                    area_id="",
+                    start_date="",
+                    end_date="",
+                    hls_manifest=f"/recordings/{rec_id}/recording.m3u8",
+                    metadata={"note": "Recovered from filesystem because index entry was missing."},
+                )
+            )
+        )
+        changed = True
+        logger.warning("recovered recording index for %s", rec_id)
+
+    if changed:
+        write_json(RECORDINGS_FILE, recordings)
+    return recordings
+
+
 class NHKClient:
     def __init__(self, session: ClientSession):
         self.session = session
@@ -662,7 +713,7 @@ async def api_reservations_delete(request: web.Request) -> web.Response:
 
 
 async def api_recordings_get(request: web.Request) -> web.Response:
-    return web.json_response(read_json(RECORDINGS_FILE))
+    return web.json_response(reconcile_recordings_index())
 
 
 def _recording_by_id(rec_id: str) -> dict[str, Any] | None:
