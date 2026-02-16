@@ -13,6 +13,7 @@ import zipfile
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from threading import RLock
 from urllib.parse import urlparse
 from typing import Any
 from xml.etree import ElementTree
@@ -40,6 +41,7 @@ SERIES_WATCH_EXPAND_INTERVAL_SECONDS = 60 * 60
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("nhk-recorder")
 DEBUG_LOG = os.getenv("DEBUG_LOG", "").lower() in {"1", "true", "yes", "on"}
+RECORDINGS_LOCK = RLock()
 
 
 @dataclass
@@ -129,63 +131,64 @@ def list_recording_dirs() -> list[Path]:
 
 
 def reconcile_recordings_index() -> list[dict[str, Any]]:
-    recordings = read_json(RECORDINGS_FILE)
-    by_id = {str(r.get("id")): r for r in recordings if isinstance(r, dict) and r.get("id")}
-    changed = False
-    recording_dirs = list_recording_dirs()
+    with RECORDINGS_LOCK:
+        recordings = read_json(RECORDINGS_FILE)
+        by_id = {str(r.get("id")): r for r in recordings if isinstance(r, dict) and r.get("id")}
+        changed = False
+        recording_dirs = list_recording_dirs()
 
-    if DEBUG_LOG:
-        logger.info(
-            "[debug] reconcile_recordings_index: indexed=%d dirs=%d",
-            len(by_id),
-            len(recording_dirs),
-        )
+        if DEBUG_LOG:
+            logger.info(
+                "[debug] reconcile_recordings_index: indexed=%d dirs=%d",
+                len(by_id),
+                len(recording_dirs),
+            )
 
-    for rec_dir in recording_dirs:
-        rec_id = rec_dir.name
-        if rec_id in by_id:
-            continue
+        for rec_dir in recording_dirs:
+            rec_id = rec_dir.name
+            if rec_id in by_id:
+                continue
 
-        manifest = rec_dir / "recording.m3u8"
-        segment_count = len([p for p in rec_dir.glob("*.ts") if p.is_file()])
-        debug_state_file = rec_dir / "recording_debug.json"
-        debug_state: dict[str, Any] = {}
-        if debug_state_file.exists():
-            with contextlib.suppress(Exception):
-                debug_state = json.loads(debug_state_file.read_text(encoding="utf-8"))
-        created_at = datetime.fromtimestamp(manifest.stat().st_mtime, timezone.utc).isoformat()
-        recordings.append(
-            asdict(
-                Recording(
-                    id=rec_id,
-                    created_at=created_at,
-                    status="ready",
-                    reservation_id=None,
-                    series_id=None,
-                    broadcast_event_id=None,
-                    title="Recovered recording",
-                    service_id="",
-                    area_id="",
-                    start_date="",
-                    end_date="",
-                    hls_manifest=f"/recordings/{rec_id}/recording.m3u8",
-                    metadata={"note": "Recovered from filesystem because index entry was missing."},
+            manifest = rec_dir / "recording.m3u8"
+            segment_count = len([p for p in rec_dir.glob("*.ts") if p.is_file()])
+            debug_state_file = rec_dir / "recording_debug.json"
+            debug_state: dict[str, Any] = {}
+            if debug_state_file.exists():
+                with contextlib.suppress(Exception):
+                    debug_state = json.loads(debug_state_file.read_text(encoding="utf-8"))
+            created_at = datetime.fromtimestamp(manifest.stat().st_mtime, timezone.utc).isoformat()
+            recordings.append(
+                asdict(
+                    Recording(
+                        id=rec_id,
+                        created_at=created_at,
+                        status="ready",
+                        reservation_id=None,
+                        series_id=None,
+                        broadcast_event_id=None,
+                        title="Recovered recording",
+                        service_id="",
+                        area_id="",
+                        start_date="",
+                        end_date="",
+                        hls_manifest=f"/recordings/{rec_id}/recording.m3u8",
+                        metadata={"note": "Recovered from filesystem because index entry was missing."},
+                    )
                 )
             )
-        )
-        changed = True
-        logger.warning(
-            "recovered recording index for %s (manifest_mtime=%s manifest_size=%s segment_count=%s debug_state=%s)",
-            rec_id,
-            created_at,
-            manifest.stat().st_size,
-            segment_count,
-            debug_state,
-        )
+            changed = True
+            logger.warning(
+                "recovered recording index for %s (manifest_mtime=%s manifest_size=%s segment_count=%s debug_state=%s)",
+                rec_id,
+                created_at,
+                manifest.stat().st_size,
+                segment_count,
+                debug_state,
+            )
 
-    if changed:
-        write_json(RECORDINGS_FILE, recordings)
-    return recordings
+        if changed:
+            write_json(RECORDINGS_FILE, recordings)
+        return recordings
 
 
 class NHKClient:
@@ -589,27 +592,28 @@ class RecorderService:
             return
 
         metadata = build_metadata_tags(event)
-        recordings = read_json(RECORDINGS_FILE)
-        recordings.append(
-            asdict(
-                Recording(
-                    id=rec_id,
-                    created_at=utc_now().isoformat(),
-                    status="ready",
-                    reservation_id=reservation["id"],
-                    series_id=reservation["payload"].get("series_id"),
-                    broadcast_event_id=event.get("broadcastEventId"),
-                    title=event.get("name", "Untitled"),
-                    service_id=service_id,
-                    area_id=event["areaId"],
-                    start_date=event["startDate"],
-                    end_date=event["endDate"],
-                    hls_manifest=f"/recordings/{rec_id}/recording.m3u8",
-                    metadata=metadata,
+        with RECORDINGS_LOCK:
+            recordings = read_json(RECORDINGS_FILE)
+            recordings.append(
+                asdict(
+                    Recording(
+                        id=rec_id,
+                        created_at=utc_now().isoformat(),
+                        status="ready",
+                        reservation_id=reservation["id"],
+                        series_id=reservation["payload"].get("series_id"),
+                        broadcast_event_id=event.get("broadcastEventId"),
+                        title=event.get("name", "Untitled"),
+                        service_id=service_id,
+                        area_id=event["areaId"],
+                        start_date=event["startDate"],
+                        end_date=event["endDate"],
+                        hls_manifest=f"/recordings/{rec_id}/recording.m3u8",
+                        metadata=metadata,
+                    )
                 )
             )
-        )
-        write_json(RECORDINGS_FILE, recordings)
+            write_json(RECORDINGS_FILE, recordings)
         self._write_recording_debug_state(rec_dir, "index_written", {"recordings_count": len(recordings)})
         await self._mark_reservation(reservation["id"], "done")
         self._write_recording_debug_state(rec_dir, "reservation_done", {"reservation_id": reservation["id"]})
@@ -800,20 +804,22 @@ async def api_recordings_get(request: web.Request) -> web.Response:
 
 
 def _recording_by_id(rec_id: str) -> dict[str, Any] | None:
-    for rec in read_json(RECORDINGS_FILE):
-        if rec["id"] == rec_id:
-            return rec
+    with RECORDINGS_LOCK:
+        for rec in read_json(RECORDINGS_FILE):
+            if rec["id"] == rec_id:
+                return rec
     return None
 
 
 async def api_recordings_patch_metadata(request: web.Request) -> web.Response:
     rec_id = request.match_info["recording_id"]
     payload = await request.json()
-    recordings = read_json(RECORDINGS_FILE)
-    for rec in recordings:
-        if rec["id"] == rec_id:
-            rec["metadata"].update({k: str(v) for k, v in payload.items()})
-    write_json(RECORDINGS_FILE, recordings)
+    with RECORDINGS_LOCK:
+        recordings = read_json(RECORDINGS_FILE)
+        for rec in recordings:
+            if rec["id"] == rec_id:
+                rec["metadata"].update({k: str(v) for k, v in payload.items()})
+        write_json(RECORDINGS_FILE, recordings)
     return web.json_response({"ok": True})
 
 
@@ -860,8 +866,9 @@ async def api_recordings_delete(request: web.Request) -> web.Response:
     rec_id = request.match_info["recording_id"]
     rec_dir = RECORDINGS_DIR / rec_id
     shutil.rmtree(rec_dir, ignore_errors=True)
-    recordings = [r for r in read_json(RECORDINGS_FILE) if r["id"] != rec_id]
-    write_json(RECORDINGS_FILE, recordings)
+    with RECORDINGS_LOCK:
+        recordings = [r for r in read_json(RECORDINGS_FILE) if r["id"] != rec_id]
+        write_json(RECORDINGS_FILE, recordings)
     return web.json_response({"ok": True})
 
 
