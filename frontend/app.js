@@ -9,10 +9,57 @@ function debugLog(...args) {
   console.log('[debug]', ...args);
 }
 
+const BACKEND_BASE_URI_KEY = 'backendBaseUri';
+
+function normalizeBackendBaseUri(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  return raw.replace(/\/$/, '');
+}
+
+function getBackendBaseUri() {
+  return normalizeBackendBaseUri(localStorage.getItem(BACKEND_BASE_URI_KEY) || '');
+}
+
+function toApiUrl(url) {
+  const base = getBackendBaseUri();
+  if (!base) return url;
+  const path = String(url || '');
+  if (/^https?:\/\//.test(path)) return path;
+  return `${base}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
+function setBackendBaseUriStatus(message) {
+  const statusEl = document.querySelector('#backendBaseUriStatus');
+  if (!statusEl) return;
+  statusEl.textContent = message;
+}
+
+function initBackendBaseUriSettings() {
+  const input = document.querySelector('#backendBaseUri');
+  const saveButton = document.querySelector('#saveBackendBaseUri');
+  if (!input || !saveButton) return;
+
+  const storedBaseUri = getBackendBaseUri();
+  input.value = storedBaseUri;
+  setBackendBaseUriStatus(storedBaseUri ? `Using backend: ${storedBaseUri}` : 'Using same-origin backend.');
+
+  saveButton.onclick = () => {
+    const normalized = normalizeBackendBaseUri(input.value);
+    if (normalized && !/^https?:\/\//.test(normalized)) {
+      setBackendBaseUriStatus('Backend URI must start with http:// or https://');
+      return;
+    }
+    localStorage.setItem(BACKEND_BASE_URI_KEY, normalized);
+    setBackendBaseUriStatus(normalized ? `Saved backend URI: ${normalized}` : 'Cleared backend URI. Using same-origin backend.');
+  };
+}
+
 async function api(url, opts) {
   debugLog('api request', { url, opts });
-  const res = await fetch(url, opts);
-  debugLog('api response', { url, status: res.status, ok: res.ok });
+  const apiUrl = toApiUrl(url);
+  const res = await fetch(apiUrl, opts);
+  debugLog('api response', { url, apiUrl, status: res.status, ok: res.ok });
   if (!res.ok) throw new Error(await res.text());
   return res;
 }
@@ -281,7 +328,7 @@ async function loadRecordings() {
       <div class="small">${JSON.stringify(r.metadata)}</div>
       <div class="actions">
         <button data-rec="${r.id}" class="play">Play</button>
-        <a href="/api/recordings/${r.id}/download"><button>Download m4a</button></a>
+        <a href="${toApiUrl(`/api/recordings/${r.id}/download`)}"><button>Download m4a</button></a>
         <button data-rec="${r.id}" class="edit-meta">Edit metadata</button>
         <button data-rec="${r.id}" class="delete-recording">Delete</button>
       </div>`;
@@ -291,7 +338,7 @@ async function loadRecordings() {
 
 function playRecording(id) {
   const player = document.querySelector('#player');
-  const src = `/recordings/${id}/recording.m3u8`;
+  const src = toApiUrl(`/recordings/${id}/recording.m3u8`);
   if (player.canPlayType('application/vnd.apple.mpegurl')) {
     player.src = src;
   } else if (window.Hls && Hls.isSupported()) {
@@ -375,6 +422,7 @@ document.addEventListener('click', async (e) => {
   }
 });
 
+initBackendBaseUriSettings();
 loadReservations();
 loadRecordings();
 debugLog('frontend debug enabled', { DEBUG_LOG, query: window.location.search });

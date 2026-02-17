@@ -44,6 +44,18 @@ logger = logging.getLogger("nhk-recorder")
 DEBUG_LOG = False
 
 
+@web.middleware
+async def cors_middleware(request: web.Request, handler: Any) -> web.StreamResponse:
+    if request.method == "OPTIONS":
+        response = web.Response(status=204)
+    else:
+        response = await handler(request)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET,POST,PATCH,DELETE,OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type,Authorization"
+    return response
+
+
 class AsyncRLock:
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
@@ -908,7 +920,7 @@ async def create_app() -> web.Application:
     await init_db(db)
     await migrate_json_to_sqlite(db)
 
-    app = web.Application()
+    app = web.Application(middlewares=[cors_middleware])
     app["session"] = session
     app["db"] = db
     app["nhk"] = NHKClient(session)
