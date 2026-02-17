@@ -56,6 +56,21 @@ async def cors_middleware(request: web.Request, handler: Any) -> web.StreamRespo
     return response
 
 
+@web.middleware
+async def frontend_files_middleware(request: web.Request, handler: Any) -> web.StreamResponse:
+    if request.method not in {"GET", "HEAD"}:
+        return await handler(request)
+
+    frontend_root = FRONTEND_DIR.resolve()
+    requested_path = request.path.lstrip("/") or "index.html"
+    candidate_path = (frontend_root / requested_path).resolve()
+
+    if candidate_path.is_relative_to(frontend_root) and candidate_path.is_file():
+        return web.FileResponse(candidate_path)
+
+    return await handler(request)
+
+
 class AsyncRLock:
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
@@ -916,10 +931,6 @@ async def api_recordings_delete(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
-async def index(request: web.Request) -> web.FileResponse:
-    return web.FileResponse(FRONTEND_DIR / "index.html")
-
-
 async def create_app() -> web.Application:
     ensure_dirs()
     timeout = ClientTimeout(total=10)
@@ -928,14 +939,12 @@ async def create_app() -> web.Application:
     await init_db(db)
     await migrate_json_to_sqlite(db)
 
-    app = web.Application(middlewares=[cors_middleware])
+    app = web.Application(middlewares=[cors_middleware, frontend_files_middleware])
     app["session"] = session
     app["db"] = db
     app["nhk"] = NHKClient(session)
     app["series_cache"] = await load_series_cache(db)
 
-    app.router.add_get("/", index)
-    app.router.add_static("/static", FRONTEND_DIR)
     app.router.add_static("/recordings", RECORDINGS_DIR)
 
     app.router.add_get("/series", api_series)
