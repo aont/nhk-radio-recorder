@@ -35,22 +35,23 @@ Use `--debug-log` if you want verbose backend logs.
 
 ## API summary
 
-- `GET /api/series`
-- `GET /api/series/resolve?series_url=<url>`
-- `GET /api/events?series_code=<code>&series_url=<url>&series_id=<id>`
-- `GET /api/reservations`
-- `POST /api/reservations`
-- `DELETE /api/reservations/{reservation_id}`
-- `GET /api/recordings`
-- `PATCH /api/recordings/{recording_id}/metadata`
-- `GET /api/recordings/{recording_id}/download`
-- `POST /api/recordings/bulk-download`
-- `DELETE /api/recordings/{recording_id}`
+- `GET /series`
+- `GET /series/resolve?series_url=<url>`
+- `GET /events?series_code=<code>&series_url=<url>&series_id=<id>`
+- `GET /reservations`
+- `POST /reservation/single-event`
+- `POST /reservation/watch-series`
+- `DELETE /reservations/{reservation_id}`
+- `GET /recordings`
+- `PATCH /recordings/{recording_id}/metadata`
+- `GET /recordings/{recording_id}/download`
+- `POST /recordings/bulk-download`
+- `DELETE /recordings/{recording_id}`
 
 
 ## Debug logging
 
-- Backend: launch with `--debug-log` to emit detailed request/response logs from the NHK fetch paths and `/api/events` handler.
+- Backend: launch with `--debug-log` to emit detailed request/response logs from the NHK fetch paths and `/events` handler.
 - Frontend: open the app with `?debug=1` (for example `http://localhost:8080/?debug=1`) or set `localStorage.debugLog = "1"` in DevTools.
 
 ## Notes

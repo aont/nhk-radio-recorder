@@ -766,7 +766,7 @@ async def api_events(request: web.Request) -> web.Response:
         events = await nhk.fetch_events(series_key)
         if DEBUG_LOG:
             logger.info(
-                "[debug] /api/events: series_key=%s lookahead_days=%s -> %d rows",
+                "[debug] /events: series_key=%s lookahead_days=%s -> %d rows",
                 series_key,
                 EVENT_LOOKAHEAD_DAYS,
                 len(events),
@@ -793,16 +793,14 @@ async def api_series_resolve(request: web.Request) -> web.Response:
         return web.json_response({"seriesCode": None})
 
 
-async def api_reservations_post(request: web.Request) -> web.Response:
-    payload = await request.json()
-    reservation_payload = payload.setdefault("payload", {})
-    if payload.get("type") == "single_event":
+async def _create_reservation(request: web.Request, reservation_type: str, reservation_payload: dict[str, Any]) -> web.Response:
+    if reservation_type == "single_event":
         reservation_payload["metadata"] = build_reservation_metadata(
             reservation_payload.get("series_id"),
             reservation_payload.get("series_code"),
             reservation_payload.get("event") or {},
         )
-    if payload.get("type") == "series_watch":
+    if reservation_type == "series_watch":
         reservation_payload["metadata"] = build_series_watch_metadata(
             reservation_payload.get("series_id"),
             reservation_payload.get("series_code"),
@@ -810,21 +808,31 @@ async def api_reservations_post(request: web.Request) -> web.Response:
         )
     reservation = Reservation(
         id=str(uuid.uuid4()),
-        type=payload["type"],
+        type=reservation_type,
         created_at=utc_now().isoformat(),
         status="pending",
-        payload=payload["payload"],
+        payload=reservation_payload,
     )
     reservations = await read_json(request.app["db"], RESERVATIONS_FILE)
     reservations.append(asdict(reservation))
     await write_json(request.app["db"], RESERVATIONS_FILE, reservations)
 
-    if payload.get("type") == "series_watch":
+    if reservation_type == "series_watch":
         recorder = request.app.get("recorder")
         if recorder:
             await recorder._expand_series_watchers()
 
     return web.json_response(asdict(reservation))
+
+
+async def reservations_post_single_event(request: web.Request) -> web.Response:
+    payload = await request.json()
+    return await _create_reservation(request, "single_event", payload)
+
+
+async def reservations_post_watch_series(request: web.Request) -> web.Response:
+    payload = await request.json()
+    return await _create_reservation(request, "series_watch", payload)
 
 
 async def api_reservations_delete(request: web.Request) -> web.Response:
@@ -930,17 +938,18 @@ async def create_app() -> web.Application:
     app.router.add_static("/static", FRONTEND_DIR)
     app.router.add_static("/recordings", RECORDINGS_DIR)
 
-    app.router.add_get("/api/series", api_series)
-    app.router.add_get("/api/series/resolve", api_series_resolve)
-    app.router.add_get("/api/events", api_events)
-    app.router.add_get("/api/reservations", api_reservations_get)
-    app.router.add_post("/api/reservations", api_reservations_post)
-    app.router.add_delete("/api/reservations/{reservation_id}", api_reservations_delete)
-    app.router.add_get("/api/recordings", api_recordings_get)
-    app.router.add_patch("/api/recordings/{recording_id}/metadata", api_recordings_patch_metadata)
-    app.router.add_get("/api/recordings/{recording_id}/download", api_recordings_download)
-    app.router.add_post("/api/recordings/bulk-download", api_recordings_bulk_download)
-    app.router.add_delete("/api/recordings/{recording_id}", api_recordings_delete)
+    app.router.add_get("/series", api_series)
+    app.router.add_get("/series/resolve", api_series_resolve)
+    app.router.add_get("/events", api_events)
+    app.router.add_get("/reservations", api_reservations_get)
+    app.router.add_post("/reservation/single-event", reservations_post_single_event)
+    app.router.add_post("/reservation/watch-series", reservations_post_watch_series)
+    app.router.add_delete("/reservations/{reservation_id}", api_reservations_delete)
+    app.router.add_get("/recordings", api_recordings_get)
+    app.router.add_patch("/recordings/{recording_id}/metadata", api_recordings_patch_metadata)
+    app.router.add_get("/recordings/{recording_id}/download", api_recordings_download)
+    app.router.add_post("/recordings/bulk-download", api_recordings_bulk_download)
+    app.router.add_delete("/recordings/{recording_id}", api_recordings_delete)
 
     recorder = RecorderService(app)
     app["recorder"] = recorder
@@ -969,7 +978,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--debug-log",
         action="store_true",
-        help="Enable verbose debug logging for NHK fetch paths and /api/events",
+        help="Enable verbose debug logging for NHK fetch paths and /events",
     )
     args = parser.parse_args()
 

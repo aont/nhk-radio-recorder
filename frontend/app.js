@@ -123,7 +123,7 @@ function renderSeriesWatchMetadata(payload) {
 }
 
 async function loadSeries() {
-  const list = await (await api('/api/series')).json();
+  const list = await (await api('/series')).json();
   debugLog('loadSeries raw count', list.length);
   seriesCache = list.sort((a, b) => (a.areaName || '').localeCompare(b.areaName || '') || a.title.localeCompare(b.title));
   debugLog('loadSeries sorted count', seriesCache.length);
@@ -159,7 +159,7 @@ async function resolveSeriesCode(seriesCode, seriesUrl) {
   if (!seriesUrl) return null;
   if (seriesCodeByUrl.has(seriesUrl)) return seriesCodeByUrl.get(seriesUrl);
   const key = encodeURIComponent(seriesUrl);
-  const payload = await (await api(`/api/series/resolve?series_url=${key}`)).json();
+  const payload = await (await api(`/series/resolve?series_url=${key}`)).json();
   const resolved = payload?.seriesCode || null;
   seriesCodeByUrl.set(seriesUrl, resolved);
   return resolved;
@@ -171,7 +171,7 @@ async function showEvents(seriesId, seriesCode, seriesUrl) {
   document.querySelector('#eventTarget').textContent = `Series: ${resolvedSeriesCode || seriesId}`;
   debugLog('showEvents start', { seriesId, seriesCode, seriesUrl, resolvedSeriesCode });
   const key = encodeURIComponent(resolvedSeriesCode || String(seriesId));
-  const events = await (await api(`/api/events?series_code=${key}`)).json();
+  const events = await (await api(`/events?series_code=${key}`)).json();
   debugLog('showEvents events count', events.length, events.slice(0, 3));
   const ul = document.querySelector('#eventsList');
   ul.innerHTML = '';
@@ -197,12 +197,13 @@ async function showEvents(seriesId, seriesCode, seriesUrl) {
 
 async function reserveEvent(event) {
   debugLog('reserveEvent', { selectedSeries, event });
-  await api('/api/reservations', {
+  await api('/reservation/single-event', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      type: 'single_event',
-      payload: { series_id: selectedSeries.seriesId, series_code: selectedSeries.seriesCode || null, event }
+      series_id: selectedSeries.seriesId,
+      series_code: selectedSeries.seriesCode || null,
+      event
     })
   });
   await loadReservations();
@@ -213,29 +214,26 @@ async function reserveSeries(seriesId, seriesCode, seriesUrl) {
   const resolvedSeriesCode = await resolveSeriesCode(seriesCode, seriesUrl || seriesInfo?.url);
   const areaId = '';
   debugLog('reserveSeries', { seriesId, seriesCode, seriesUrl, resolvedSeriesCode, areaId, seriesInfo });
-  await api('/api/reservations', {
+  await api('/reservation/watch-series', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      type: 'series_watch',
-      payload: {
-        series_id: Number(seriesId),
-        series_code: resolvedSeriesCode || null,
-        series_title: seriesInfo?.title || null,
-        series_area: seriesInfo?.areaName || null,
-        series_schedule: seriesInfo?.scheduleText || null,
-        program_url: seriesInfo?.url || null,
-        series_thumbnail_url: seriesInfo?.thumbnailUrl || null,
-        area_id: areaId || null,
-        seen_broadcast_event_ids: []
-      }
+      series_id: Number(seriesId),
+      series_code: resolvedSeriesCode || null,
+      series_title: seriesInfo?.title || null,
+      series_area: seriesInfo?.areaName || null,
+      series_schedule: seriesInfo?.scheduleText || null,
+      program_url: seriesInfo?.url || null,
+      series_thumbnail_url: seriesInfo?.thumbnailUrl || null,
+      area_id: areaId || null,
+      seen_broadcast_event_ids: []
     })
   });
   await loadReservations();
 }
 
 async function loadReservations() {
-  const rows = await (await api('/api/reservations')).json();
+  const rows = await (await api('/reservations')).json();
   debugLog('loadReservations count', rows.length);
   const seriesWatchList = document.querySelector('#seriesWatchReservationList');
   const singleEventList = document.querySelector('#singleEventReservationList');
@@ -317,7 +315,7 @@ function renderReservationItem(row) {
 }
 
 async function loadRecordings() {
-  const rows = await (await api('/api/recordings')).json();
+  const rows = await (await api('/recordings')).json();
   debugLog('loadRecordings count', rows.length);
   const ul = document.querySelector('#recordingList');
   ul.innerHTML = '';
@@ -328,7 +326,7 @@ async function loadRecordings() {
       <div class="small">${JSON.stringify(r.metadata)}</div>
       <div class="actions">
         <button data-rec="${r.id}" class="play">Play</button>
-        <a href="${toApiUrl(`/api/recordings/${r.id}/download`)}"><button>Download m4a</button></a>
+        <a href="${toApiUrl(`/recordings/${r.id}/download`)}"><button>Download m4a</button></a>
         <button data-rec="${r.id}" class="edit-meta">Edit metadata</button>
         <button data-rec="${r.id}" class="delete-recording">Delete</button>
       </div>`;
@@ -367,7 +365,7 @@ async function editMetadata(id) {
   if (title) payload.title = title;
   if (description) payload.description = description;
   debugLog('editMetadata', { id, payload });
-  await api(`/api/recordings/${id}/metadata`, {
+  await api(`/recordings/${id}/metadata`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -379,7 +377,7 @@ async function bulkDownload() {
   const ids = [...document.querySelectorAll('.bulk:checked')].map(x => x.value);
   debugLog('bulkDownload ids', ids);
   if (!ids.length) return alert('No recordings selected.');
-  const res = await api('/api/recordings/bulk-download', {
+  const res = await api('/recordings/bulk-download', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ids })
@@ -404,7 +402,7 @@ document.addEventListener('click', async (e) => {
   if (e.target.matches('.show-events')) await showEvents(e.target.dataset.sid, e.target.dataset.scode, e.target.dataset.surl);
   if (e.target.matches('.watch-series')) await reserveSeries(e.target.dataset.sid, e.target.dataset.scode, e.target.dataset.surl);
   if (e.target.matches('.delete-reservation')) {
-    await api(`/api/reservations/${e.target.dataset.rid}`, { method: 'DELETE' });
+    await api(`/reservations/${e.target.dataset.rid}`, { method: 'DELETE' });
     await loadReservations();
   }
   if (e.target.matches('.toggle-reservation-group')) {
@@ -417,7 +415,7 @@ document.addEventListener('click', async (e) => {
   if (e.target.matches('.play')) playRecording(e.target.dataset.rec);
   if (e.target.matches('.edit-meta')) await editMetadata(e.target.dataset.rec);
   if (e.target.matches('.delete-recording')) {
-    await api(`/api/recordings/${e.target.dataset.rec}`, { method: 'DELETE' });
+    await api(`/recordings/${e.target.dataset.rec}`, { method: 'DELETE' });
     await loadRecordings();
   }
 });
