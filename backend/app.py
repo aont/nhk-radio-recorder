@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import argparse
 import contextlib
 import json
 import logging
-import os
 import re
 import shutil
 import tempfile
@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 from typing import Any
 from xml.etree import ElementTree
 
+import aiosqlite
 from aiohttp import ClientSession, ClientTimeout, web
 from sleep_absolute import wait_until
 from asyncio.subprocess import PIPE
@@ -28,6 +29,7 @@ FRONTEND_DIR = BASE_DIR / "frontend"
 RESERVATIONS_FILE = DATA_DIR / "reservations.json"
 RECORDINGS_FILE = DATA_DIR / "recordings.json"
 SERIES_CACHE_FILE = DATA_DIR / "series_cache.json"
+DATABASE_FILE = DATA_DIR / "app.sqlite3"
 
 SERIES_URL_TMPL = "https://www.nhk.or.jp/radio-api/app/v1/web/series?kana={kana}"
 SERIES_KANA_LIST = ("a", "k", "s", "t", "n", "h", "m", "y", "r", "w")
@@ -39,7 +41,44 @@ SERIES_WATCH_EXPAND_INTERVAL_SECONDS = 60 * 60
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("nhk-recorder")
-DEBUG_LOG = os.getenv("DEBUG_LOG", "").lower() in {"1", "true", "yes", "on"}
+DEBUG_LOG = False
+
+
+class AsyncRLock:
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._owner: asyncio.Task[Any] | None = None
+        self._count = 0
+
+    async def acquire(self) -> None:
+        current = asyncio.current_task()
+        if current is None:
+            raise RuntimeError("AsyncRLock must be used in an asyncio task")
+        if self._owner is current:
+            self._count += 1
+            return
+        await self._lock.acquire()
+        self._owner = current
+        self._count = 1
+
+    def release(self) -> None:
+        current = asyncio.current_task()
+        if current is None or self._owner is not current:
+            raise RuntimeError("AsyncRLock released by non-owner")
+        self._count -= 1
+        if self._count == 0:
+            self._owner = None
+            self._lock.release()
+
+    async def __aenter__(self) -> "AsyncRLock":
+        await self.acquire()
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        self.release()
+
+
+RECORDINGS_LOCK = AsyncRLock()
 
 
 @dataclass
@@ -75,18 +114,75 @@ def utc_now() -> datetime:
 def ensure_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
-    if not RESERVATIONS_FILE.exists():
-        RESERVATIONS_FILE.write_text("[]", encoding="utf-8")
-    if not RECORDINGS_FILE.exists():
-        RECORDINGS_FILE.write_text("[]", encoding="utf-8")
 
 
-def load_series_cache() -> dict[str, Any]:
-    default = {"value": None, "expires_at": datetime.fromtimestamp(0, timezone.utc)}
-    if not SERIES_CACHE_FILE.exists():
+async def init_db(db: aiosqlite.Connection) -> None:
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_data (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """
+    )
+    await db.commit()
+
+
+def _db_key(path: Path) -> str:
+    if path == RESERVATIONS_FILE:
+        return "reservations"
+    if path == RECORDINGS_FILE:
+        return "recordings"
+    if path == SERIES_CACHE_FILE:
+        return "series_cache"
+    return path.name
+
+
+async def _db_get_json(db: aiosqlite.Connection, key: str, default: Any) -> Any:
+    async with db.execute("SELECT value FROM app_data WHERE key = ?", (key,)) as cur:
+        row = await cur.fetchone()
+    if not row:
         return default
     try:
-        payload = json.loads(SERIES_CACHE_FILE.read_text(encoding="utf-8"))
+        return json.loads(row[0])
+    except Exception:
+        logger.warning("failed to decode db json: key=%s", key)
+        return default
+
+
+async def _db_set_json(db: aiosqlite.Connection, key: str, value: Any) -> None:
+    await db.execute(
+        "INSERT INTO app_data(key, value) VALUES(?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (key, json.dumps(value, ensure_ascii=False)),
+    )
+    await db.commit()
+
+
+async def migrate_json_to_sqlite(db: aiosqlite.Connection) -> None:
+    legacy_sources = (
+        ("reservations", RESERVATIONS_FILE, []),
+        ("recordings", RECORDINGS_FILE, []),
+        ("series_cache", SERIES_CACHE_FILE, {"value": None, "expires_at": datetime.fromtimestamp(0, timezone.utc).isoformat()}),
+    )
+    for key, path, default in legacy_sources:
+        async with db.execute("SELECT 1 FROM app_data WHERE key = ?", (key,)) as cur:
+            exists = await cur.fetchone()
+        if exists:
+            continue
+        value: Any = default
+        if path.exists():
+            with contextlib.suppress(Exception):
+                value = json.loads(path.read_text(encoding="utf-8"))
+        await _db_set_json(db, key, value)
+
+
+async def load_series_cache(db: aiosqlite.Connection) -> dict[str, Any]:
+    default = {"value": None, "expires_at": datetime.fromtimestamp(0, timezone.utc)}
+    payload = await _db_get_json(db, "series_cache", None)
+    if not isinstance(payload, dict):
+        return default
+    try:
         expires_at = datetime.fromisoformat(str(payload.get("expires_at", "")))
         if expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
@@ -95,97 +191,27 @@ def load_series_cache() -> dict[str, Any]:
             value = None
         return {"value": value, "expires_at": expires_at}
     except Exception:
-        logger.warning("failed to load series cache: %s", SERIES_CACHE_FILE)
+        logger.warning("failed to load series cache from sqlite")
         return default
 
 
-def persist_series_cache(cache: dict[str, Any]) -> None:
-    SERIES_CACHE_FILE.write_text(
-        json.dumps({"value": cache.get("value"), "expires_at": cache["expires_at"].isoformat()}, ensure_ascii=False),
-        encoding="utf-8",
+async def persist_series_cache(db: aiosqlite.Connection, cache: dict[str, Any]) -> None:
+    await _db_set_json(
+        db,
+        "series_cache",
+        {"value": cache.get("value"), "expires_at": cache["expires_at"].isoformat()},
     )
 
 
-def read_json(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
+async def read_json(db: aiosqlite.Connection, path: Path) -> list[dict[str, Any]]:
+    payload = await _db_get_json(db, _db_key(path), [])
+    if not isinstance(payload, list):
         return []
-    return json.loads(path.read_text(encoding="utf-8"))
+    return payload
 
 
-def write_json(path: Path, payload: list[dict[str, Any]]) -> None:
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def list_recording_dirs() -> list[Path]:
-    if not RECORDINGS_DIR.exists():
-        return []
-    out: list[Path] = []
-    for rec_dir in RECORDINGS_DIR.iterdir():
-        if not rec_dir.is_dir():
-            continue
-        if (rec_dir / "recording.m3u8").exists():
-            out.append(rec_dir)
-    return out
-
-
-def reconcile_recordings_index() -> list[dict[str, Any]]:
-    recordings = read_json(RECORDINGS_FILE)
-    by_id = {str(r.get("id")): r for r in recordings if isinstance(r, dict) and r.get("id")}
-    changed = False
-    recording_dirs = list_recording_dirs()
-
-    if DEBUG_LOG:
-        logger.info(
-            "[debug] reconcile_recordings_index: indexed=%d dirs=%d",
-            len(by_id),
-            len(recording_dirs),
-        )
-
-    for rec_dir in recording_dirs:
-        rec_id = rec_dir.name
-        if rec_id in by_id:
-            continue
-
-        manifest = rec_dir / "recording.m3u8"
-        segment_count = len([p for p in rec_dir.glob("*.ts") if p.is_file()])
-        debug_state_file = rec_dir / "recording_debug.json"
-        debug_state: dict[str, Any] = {}
-        if debug_state_file.exists():
-            with contextlib.suppress(Exception):
-                debug_state = json.loads(debug_state_file.read_text(encoding="utf-8"))
-        created_at = datetime.fromtimestamp(manifest.stat().st_mtime, timezone.utc).isoformat()
-        recordings.append(
-            asdict(
-                Recording(
-                    id=rec_id,
-                    created_at=created_at,
-                    status="ready",
-                    reservation_id=None,
-                    series_id=None,
-                    broadcast_event_id=None,
-                    title="Recovered recording",
-                    service_id="",
-                    area_id="",
-                    start_date="",
-                    end_date="",
-                    hls_manifest=f"/recordings/{rec_id}/recording.m3u8",
-                    metadata={"note": "Recovered from filesystem because index entry was missing."},
-                )
-            )
-        )
-        changed = True
-        logger.warning(
-            "recovered recording index for %s (manifest_mtime=%s manifest_size=%s segment_count=%s debug_state=%s)",
-            rec_id,
-            created_at,
-            manifest.stat().st_size,
-            segment_count,
-            debug_state,
-        )
-
-    if changed:
-        write_json(RECORDINGS_FILE, recordings)
-    return recordings
+async def write_json(db: aiosqlite.Connection, path: Path, payload: list[dict[str, Any]]) -> None:
+    await _db_set_json(db, _db_key(path), payload)
 
 
 class NHKClient:
@@ -428,7 +454,7 @@ class RecorderService:
             await asyncio.sleep(30)
 
     async def _expand_series_watchers(self) -> None:
-        reservations = read_json(RESERVATIONS_FILE)
+        reservations = await read_json(self.app["db"], RESERVATIONS_FILE)
         changed = False
         for r in reservations:
             if r["type"] != "series_watch" or r["status"] != "pending":
@@ -464,10 +490,10 @@ class RecorderService:
                 changed = True
             payload["seen_broadcast_event_ids"] = sorted(seen)
         if changed:
-            write_json(RESERVATIONS_FILE, reservations)
+            await write_json(self.app["db"], RESERVATIONS_FILE, reservations)
 
     async def _run_due_recordings(self) -> None:
-        reservations = read_json(RESERVATIONS_FILE)
+        reservations = await read_json(self.app["db"], RESERVATIONS_FILE)
         changed = False
         for r in reservations:
             if r["type"] != "single_event" or r["status"] not in {"pending", "scheduled"}:
@@ -484,7 +510,7 @@ class RecorderService:
             task = asyncio.create_task(self._wait_and_execute_recording(r, start_dt))
             self.active_recording_tasks[r["id"]] = task
         if changed:
-            write_json(RESERVATIONS_FILE, reservations)
+            await write_json(self.app["db"], RESERVATIONS_FILE, reservations)
 
     async def _wait_and_execute_recording(self, reservation: dict[str, Any], start_dt: datetime) -> None:
         try:
@@ -589,27 +615,28 @@ class RecorderService:
             return
 
         metadata = build_metadata_tags(event)
-        recordings = read_json(RECORDINGS_FILE)
-        recordings.append(
-            asdict(
-                Recording(
-                    id=rec_id,
-                    created_at=utc_now().isoformat(),
-                    status="ready",
-                    reservation_id=reservation["id"],
-                    series_id=reservation["payload"].get("series_id"),
-                    broadcast_event_id=event.get("broadcastEventId"),
-                    title=event.get("name", "Untitled"),
-                    service_id=service_id,
-                    area_id=event["areaId"],
-                    start_date=event["startDate"],
-                    end_date=event["endDate"],
-                    hls_manifest=f"/recordings/{rec_id}/recording.m3u8",
-                    metadata=metadata,
+        async with RECORDINGS_LOCK:
+            recordings = await read_json(self.app["db"], RECORDINGS_FILE)
+            recordings.append(
+                asdict(
+                    Recording(
+                        id=rec_id,
+                        created_at=utc_now().isoformat(),
+                        status="ready",
+                        reservation_id=reservation["id"],
+                        series_id=reservation["payload"].get("series_id"),
+                        broadcast_event_id=event.get("broadcastEventId"),
+                        title=event.get("name", "Untitled"),
+                        service_id=service_id,
+                        area_id=event["areaId"],
+                        start_date=event["startDate"],
+                        end_date=event["endDate"],
+                        hls_manifest=f"/recordings/{rec_id}/recording.m3u8",
+                        metadata=metadata,
+                    )
                 )
             )
-        )
-        write_json(RECORDINGS_FILE, recordings)
+            await write_json(self.app["db"], RECORDINGS_FILE, recordings)
         self._write_recording_debug_state(rec_dir, "index_written", {"recordings_count": len(recordings)})
         await self._mark_reservation(reservation["id"], "done")
         self._write_recording_debug_state(rec_dir, "reservation_done", {"reservation_id": reservation["id"]})
@@ -637,11 +664,11 @@ class RecorderService:
             logger.exception("failed to write recording debug state: %s", debug_file)
 
     async def _mark_reservation(self, reservation_id: str, status: str) -> None:
-        reservations = read_json(RESERVATIONS_FILE)
+        reservations = await read_json(self.app["db"], RESERVATIONS_FILE)
         for r in reservations:
             if r["id"] == reservation_id:
                 r["status"] = status
-        write_json(RESERVATIONS_FILE, reservations)
+        await write_json(self.app["db"], RESERVATIONS_FILE, reservations)
 
 
 def build_metadata_tags(event: dict[str, Any]) -> dict[str, str]:
@@ -703,7 +730,7 @@ async def api_series(request: web.Request) -> web.Response:
         data = await request.app["nhk"].fetch_series()
         cache["value"] = data
         cache["expires_at"] = now + SERIES_CACHE_TTL
-        persist_series_cache(cache)
+        await persist_series_cache(request.app["db"], cache)
         return web.json_response(data)
     except Exception as exc:
         logger.warning("series fetch failed: %s", exc)
@@ -739,7 +766,7 @@ async def api_events(request: web.Request) -> web.Response:
 
 
 async def api_reservations_get(request: web.Request) -> web.Response:
-    return web.json_response(read_json(RESERVATIONS_FILE))
+    return web.json_response(await read_json(request.app["db"], RESERVATIONS_FILE))
 
 
 async def api_series_resolve(request: web.Request) -> web.Response:
@@ -776,9 +803,9 @@ async def api_reservations_post(request: web.Request) -> web.Response:
         status="pending",
         payload=payload["payload"],
     )
-    reservations = read_json(RESERVATIONS_FILE)
+    reservations = await read_json(request.app["db"], RESERVATIONS_FILE)
     reservations.append(asdict(reservation))
-    write_json(RESERVATIONS_FILE, reservations)
+    await write_json(request.app["db"], RESERVATIONS_FILE, reservations)
 
     if payload.get("type") == "series_watch":
         recorder = request.app.get("recorder")
@@ -790,30 +817,33 @@ async def api_reservations_post(request: web.Request) -> web.Response:
 
 async def api_reservations_delete(request: web.Request) -> web.Response:
     rid = request.match_info["reservation_id"]
-    reservations = [r for r in read_json(RESERVATIONS_FILE) if r["id"] != rid]
-    write_json(RESERVATIONS_FILE, reservations)
+    reservations = [r for r in await read_json(request.app["db"], RESERVATIONS_FILE) if r["id"] != rid]
+    await write_json(request.app["db"], RESERVATIONS_FILE, reservations)
     return web.json_response({"ok": True})
 
 
 async def api_recordings_get(request: web.Request) -> web.Response:
-    return web.json_response(reconcile_recordings_index())
+    async with RECORDINGS_LOCK:
+        return web.json_response(await read_json(request.app["db"], RECORDINGS_FILE))
 
 
-def _recording_by_id(rec_id: str) -> dict[str, Any] | None:
-    for rec in read_json(RECORDINGS_FILE):
-        if rec["id"] == rec_id:
-            return rec
+async def _recording_by_id(db: aiosqlite.Connection, rec_id: str) -> dict[str, Any] | None:
+    async with RECORDINGS_LOCK:
+        for rec in await read_json(db, RECORDINGS_FILE):
+            if rec["id"] == rec_id:
+                return rec
     return None
 
 
 async def api_recordings_patch_metadata(request: web.Request) -> web.Response:
     rec_id = request.match_info["recording_id"]
     payload = await request.json()
-    recordings = read_json(RECORDINGS_FILE)
-    for rec in recordings:
-        if rec["id"] == rec_id:
-            rec["metadata"].update({k: str(v) for k, v in payload.items()})
-    write_json(RECORDINGS_FILE, recordings)
+    async with RECORDINGS_LOCK:
+        recordings = await read_json(request.app["db"], RECORDINGS_FILE)
+        for rec in recordings:
+            if rec["id"] == rec_id:
+                rec["metadata"].update({k: str(v) for k, v in payload.items()})
+        await write_json(request.app["db"], RECORDINGS_FILE, recordings)
     return web.json_response({"ok": True})
 
 
@@ -834,7 +864,7 @@ async def _convert_to_m4a(rec: dict[str, Any]) -> Path:
 
 async def api_recordings_download(request: web.Request) -> web.StreamResponse:
     rec_id = request.match_info["recording_id"]
-    rec = _recording_by_id(rec_id)
+    rec = await _recording_by_id(request.app["db"], rec_id)
     if not rec:
         raise web.HTTPNotFound()
     m4a = await _convert_to_m4a(rec)
@@ -848,7 +878,7 @@ async def api_recordings_bulk_download(request: web.Request) -> web.StreamRespon
     zippath = tmpdir / "recordings.zip"
     with zipfile.ZipFile(zippath, "w", compression=zipfile.ZIP_STORED) as zf:
         for rec_id in ids:
-            rec = _recording_by_id(rec_id)
+            rec = await _recording_by_id(request.app["db"], rec_id)
             if not rec:
                 continue
             m4a = await _convert_to_m4a(rec)
@@ -860,8 +890,9 @@ async def api_recordings_delete(request: web.Request) -> web.Response:
     rec_id = request.match_info["recording_id"]
     rec_dir = RECORDINGS_DIR / rec_id
     shutil.rmtree(rec_dir, ignore_errors=True)
-    recordings = [r for r in read_json(RECORDINGS_FILE) if r["id"] != rec_id]
-    write_json(RECORDINGS_FILE, recordings)
+    async with RECORDINGS_LOCK:
+        recordings = [r for r in await read_json(request.app["db"], RECORDINGS_FILE) if r["id"] != rec_id]
+        await write_json(request.app["db"], RECORDINGS_FILE, recordings)
     return web.json_response({"ok": True})
 
 
@@ -873,10 +904,15 @@ async def create_app() -> web.Application:
     ensure_dirs()
     timeout = ClientTimeout(total=10)
     session = ClientSession(timeout=timeout)
+    db = await aiosqlite.connect(DATABASE_FILE)
+    await init_db(db)
+    await migrate_json_to_sqlite(db)
+
     app = web.Application()
     app["session"] = session
+    app["db"] = db
     app["nhk"] = NHKClient(session)
-    app["series_cache"] = load_series_cache()
+    app["series_cache"] = await load_series_cache(db)
 
     app.router.add_get("/", index)
     app.router.add_static("/static", FRONTEND_DIR)
@@ -903,6 +939,7 @@ async def create_app() -> web.Application:
     async def on_cleanup(_: web.Application) -> None:
         await recorder.stop()
         await session.close()
+        await db.close()
 
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
@@ -910,4 +947,19 @@ async def create_app() -> web.Application:
 
 
 if __name__ == "__main__":
-    web.run_app(create_app(), host="0.0.0.0", port=int(os.getenv("PORT", "8080")))
+    parser = argparse.ArgumentParser(description="NHK radio recorder backend server")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8080,
+        help="Port to bind the web server (default: 8080)",
+    )
+    parser.add_argument(
+        "--debug-log",
+        action="store_true",
+        help="Enable verbose debug logging for NHK fetch paths and /api/events",
+    )
+    args = parser.parse_args()
+
+    DEBUG_LOG = args.debug_log
+    web.run_app(create_app(), host="0.0.0.0", port=args.port)

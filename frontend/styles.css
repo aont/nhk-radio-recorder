@@ -28,3 +28,8 @@ audio { width: 100%; background: #f0f2f7; }
   max-height: none;
   overflow: visible;
 }
+
+#recordingList {
+  max-height: none;
+  overflow: visible;
+}

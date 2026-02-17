@@ -26,10 +26,12 @@ This project provides:
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python backend/app.py
+python backend/app.py --port 8080
 ```
 
 Open http://localhost:8080 .
+
+Use `--debug-log` if you want verbose backend logs.
 
 ## API summary
 
@@ -48,7 +50,7 @@ Open http://localhost:8080 .
 
 ## Debug logging
 
-- Backend: set environment variable `DEBUG_LOG=1` before launching to emit detailed request/response logs from the NHK fetch paths and `/api/events` handler.
+- Backend: launch with `--debug-log` to emit detailed request/response logs from the NHK fetch paths and `/api/events` handler.
 - Frontend: open the app with `?debug=1` (for example `http://localhost:8080/?debug=1`) or set `localStorage.debugLog = "1"` in DevTools.
 
 ## Notes
