@@ -304,6 +304,15 @@ function playRecording(id) {
   player.play();
 }
 
+
+function seekPlayerBy(offsetSeconds) {
+  const player = document.querySelector('#player');
+  if (!player) return;
+  const rawNextTime = Math.max(player.currentTime + offsetSeconds, 0);
+  const nextTime = Number.isFinite(player.duration) ? Math.min(rawNextTime, player.duration) : rawNextTime;
+  player.currentTime = nextTime;
+}
+
 async function editMetadata(id) {
   const title = prompt('Set metadata.title (blank to skip):', '');
   const description = prompt('Set metadata.description (blank to skip):', '');
@@ -341,6 +350,8 @@ document.querySelector('#broadcastFilter').onchange = renderSeries;
 document.querySelector('#refreshReservations').onclick = loadReservations;
 document.querySelector('#refreshRecordings').onclick = loadRecordings;
 document.querySelector('#bulkDownload').onclick = bulkDownload;
+document.querySelector('#seekBack10').onclick = () => seekPlayerBy(-10);
+document.querySelector('#seekForward10').onclick = () => seekPlayerBy(10);
 
 document.addEventListener('click', async (e) => {
   if (e.target.matches('.show-events')) await showEvents(e.target.dataset.sid, e.target.dataset.scode, e.target.dataset.surl);
