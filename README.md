@@ -52,7 +52,7 @@ Use `--debug-log` if you want verbose backend logs.
 ## Debug logging
 
 - Backend: launch with `--debug-log` to emit detailed request/response logs from the NHK fetch paths and `/events` handler.
-- Frontend: open the app with `?debug=1` (for example `http://localhost:8080/?debug=1`) or set `localStorage.debugLog = "1"` in DevTools.
+- Frontend: open the app with `?debug=1` (for example `http://localhost:8080/?debug=1`) or set `localStorage["nhkRadioRecorder.debugLog"] = "1"` in DevTools.
 
 ## Notes
 

@@ -2,14 +2,15 @@ let seriesCache = [];
 let selectedSeries = null;
 const seriesCodeByUrl = new Map();
 const expandedReservationGroups = new Set();
-const DEBUG_LOG = ['1', 'true', 'yes', 'on'].includes((new URLSearchParams(window.location.search).get('debug') || localStorage.getItem('debugLog') || '').toLowerCase());
+const DEBUG_LOG_KEY = 'nhkRadioRecorder.debugLog';
+const DEBUG_LOG = ['1', 'true', 'yes', 'on'].includes((new URLSearchParams(window.location.search).get('debug') || localStorage.getItem(DEBUG_LOG_KEY) || '').toLowerCase());
 
 function debugLog(...args) {
   if (!DEBUG_LOG) return;
   console.log('[debug]', ...args);
 }
 
-const BACKEND_BASE_URI_KEY = 'backendBaseUri';
+const BACKEND_BASE_URI_KEY = 'nhkRadioRecorder.backendBaseUri';
 
 function normalizeBackendBaseUri(value) {
   const raw = String(value || '').trim();
