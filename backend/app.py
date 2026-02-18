@@ -549,6 +549,7 @@ class RecorderService:
             self.active_recording_tasks.pop(reservation["id"], None)
 
     async def execute_recording(self, reservation: dict[str, Any]) -> None:
+        await self._mark_reservation(reservation["id"], "recording")
         event = reservation["payload"]["event"]
         service_id = event["serviceId"]
         stream_key = "fm" if service_id == "r3" else service_id

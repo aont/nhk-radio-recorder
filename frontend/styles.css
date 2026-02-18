@@ -36,3 +36,32 @@ audio { width: 100%; background: #f0f2f7; }
 
 
 .player-controls { display: flex; gap: 8px; margin: 8px 0; }
+
+.recording-status-pill {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.status-in-progress {
+  background: #fff3cd;
+  color: #7a5700;
+}
+
+.status-failed {
+  background: #fde2e1;
+  color: #9c1c1c;
+}
+
+.status-ready {
+  background: #e3f6e8;
+  color: #146c2e;
+}
+
+.status-unknown {
+  background: #e9ecef;
+  color: #495057;
+}

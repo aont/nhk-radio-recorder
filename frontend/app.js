@@ -315,6 +315,17 @@ function renderReservationItem(row) {
   return li;
 }
 
+
+function getRecordingDisplayStatus(recording) {
+  const status = String(recording?.status || '').toLowerCase();
+  if (status === 'failed') return { label: 'Failed', className: 'status-failed' };
+  if (['pending', 'scheduled', 'recording', 'processing', 'in_progress'].includes(status)) {
+    return { label: 'In Progress', className: 'status-in-progress' };
+  }
+  if (status === 'ready' || status === 'done') return { label: 'Ready', className: 'status-ready' };
+  return { label: status || 'Unknown', className: 'status-unknown' };
+}
+
 async function loadRecordings() {
   const rows = await (await api('/recordings')).json();
   debugLog('loadRecordings count', rows.length);
@@ -322,12 +333,16 @@ async function loadRecordings() {
   ul.innerHTML = '';
   rows.forEach(r => {
     const li = document.createElement('li');
+    const displayStatus = getRecordingDisplayStatus(r);
+    const isReady = String(r?.status || '').toLowerCase() === 'ready';
     li.innerHTML = `<label><input type="checkbox" class="bulk" value="${r.id}"/> </label>
-      <b>${r.title}</b> <span class="small">${fmt(r.start_date)} / ${r.id}</span>
+      <b>${r.title}</b>
+      <span class="recording-status-pill ${displayStatus.className}">${escapeHtml(displayStatus.label)}</span>
+      <span class="small">${fmt(r.start_date)} / ${r.id}</span>
       <div class="small">${JSON.stringify(r.metadata)}</div>
       <div class="actions">
-        <button data-rec="${r.id}" class="play">Play</button>
-        <a href="${toApiUrl(`/recordings/${r.id}/download`)}"><button>Download m4a</button></a>
+        <button data-rec="${r.id}" class="play" ${isReady ? '' : 'disabled'}>Play</button>
+        ${isReady ? `<a href="${toApiUrl(`/recordings/${r.id}/download`)}"><button>Download m4a</button></a>` : ''}
         <button data-rec="${r.id}" class="edit-meta">Edit metadata</button>
         <button data-rec="${r.id}" class="delete-recording">Delete</button>
       </div>`;
