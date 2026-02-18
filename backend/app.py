@@ -38,6 +38,7 @@ EVENT_LOOKAHEAD_DAYS = 7
 CONFIG_URL = "https://www.nhk.or.jp/radio/config/config_web.xml"
 SERIES_CACHE_TTL = timedelta(hours=1)
 SERIES_WATCH_EXPAND_INTERVAL_SECONDS = 60 * 60
+RECORDING_END_DELAY_SECONDS = 60
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("nhk-recorder")
@@ -603,6 +604,7 @@ class RecorderService:
         end_dt = datetime.fromisoformat(event["endDate"])
         if end_dt.tzinfo is None:
             end_dt = end_dt.replace(tzinfo=timezone.utc)
+        stop_dt = end_dt + timedelta(seconds=RECORDING_END_DELAY_SECONDS)
 
         cmd = [
             "ffmpeg",
@@ -624,8 +626,8 @@ class RecorderService:
         logger.info("recording ffmpeg start: reservation_id=%s rec_id=%s cmd=%s", reservation["id"], rec_id, cmd)
         proc = await asyncio.create_subprocess_exec(*cmd, stdin=PIPE)
         self._write_recording_debug_state(rec_dir, "ffmpeg_started", {"pid": proc.pid, "command": cmd})
-        if end_dt > utc_now():
-            await wait_until(end_dt)
+        if stop_dt > utc_now():
+            await wait_until(stop_dt)
 
         if proc.returncode is None and proc.stdin:
             with contextlib.suppress(BrokenPipeError, ConnectionResetError):
