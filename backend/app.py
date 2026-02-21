@@ -948,8 +948,6 @@ async def create_app() -> web.Application:
     app["nhk"] = NHKClient(session)
     app["series_cache"] = await load_series_cache(db)
 
-    app.router.add_static("/recordings", RECORDINGS_DIR)
-
     app.router.add_get("/series", api_series)
     app.router.add_get("/series/resolve", api_series_resolve)
     app.router.add_get("/events", api_events)
@@ -962,6 +960,7 @@ async def create_app() -> web.Application:
     app.router.add_get("/recordings/{recording_id}/download", api_recordings_download)
     app.router.add_post("/recordings/bulk-download", api_recordings_bulk_download)
     app.router.add_delete("/recordings/{recording_id}", api_recordings_delete)
+    app.router.add_static("/recordings", RECORDINGS_DIR)
 
     recorder = RecorderService(app)
     app["recorder"] = recorder
