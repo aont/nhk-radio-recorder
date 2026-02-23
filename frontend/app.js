@@ -360,10 +360,22 @@ function updateNowPlayingLabel(recording) {
     label.textContent = 'Now Playing: Not playing';
     return;
   }
-  const serviceName = recording?.metadata?.service_name || recording?.metadata?.serviceDisplayName;
-  const pieces = [recording.title];
-  if (serviceName) pieces.push(serviceName);
-  label.textContent = `Now Playing: ${pieces.join(' / ')}`;
+
+  const metadata = recording?.metadata || {};
+  const title = recording?.title || metadata.title || 'Unknown title';
+  const serviceName = metadata.service_name || metadata.serviceDisplayName;
+  const description = metadata.description || recording?.description;
+  const duration = fmtDuration(metadata.duration);
+  const rows = [
+    `<div class="now-playing-title">Now Playing: ${escapeHtml(title)}</div>`,
+    serviceName ? `<div class="small"><b>Service:</b> ${escapeHtml(serviceName)}</div>` : '',
+    recording?.start_date ? `<div class="small"><b>Start:</b> ${escapeHtml(fmt(recording.start_date))}</div>` : '',
+    duration ? `<div class="small"><b>Duration:</b> ${escapeHtml(duration)}</div>` : '',
+    recording?.id ? `<div class="small"><b>Recording ID:</b> ${escapeHtml(recording.id)}</div>` : '',
+    description ? `<div class="small"><b>Description:</b> ${escapeHtml(description)}</div>` : ''
+  ].filter(Boolean);
+
+  label.innerHTML = rows.join('');
 }
 
 function playRecording(id) {
