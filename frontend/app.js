@@ -361,8 +361,10 @@ function updateNowPlayingLabel(recording) {
     return;
   }
   const serviceName = recording?.metadata?.service_name || recording?.metadata?.serviceDisplayName;
+  const guid = recording?.metadata?.guid || recording?.metadata?.GUID || recording?.guid;
   const pieces = [recording.title];
   if (serviceName) pieces.push(serviceName);
+  if (guid) pieces.push(`GUID: ${guid}`);
   label.textContent = `Now Playing: ${pieces.join(' / ')}`;
 }
 
