@@ -37,6 +37,12 @@ audio { width: 100%; background: #f0f2f7; }
 
 .player-controls { display: flex; gap: 8px; margin: 8px 0; }
 
+.now-playing {
+  margin-bottom: 8px;
+  font-weight: 600;
+  color: #1f4b99;
+}
+
 .recording-status-pill {
   display: inline-block;
   margin-left: 8px;

@@ -2,6 +2,7 @@ let seriesCache = [];
 let selectedSeries = null;
 const seriesCodeByUrl = new Map();
 const expandedReservationGroups = new Set();
+const recordingById = new Map();
 const DEBUG_LOG_KEY = 'nhkRadioRecorder.debugLog';
 const DEBUG_LOG = ['1', 'true', 'yes', 'on'].includes((new URLSearchParams(window.location.search).get('debug') || localStorage.getItem(DEBUG_LOG_KEY) || '').toLowerCase());
 
@@ -331,7 +332,9 @@ async function loadRecordings() {
   debugLog('loadRecordings count', rows.length);
   const ul = document.querySelector('#recordingList');
   ul.innerHTML = '';
+  recordingById.clear();
   rows.forEach(r => {
+    recordingById.set(String(r.id), r);
     const li = document.createElement('li');
     const displayStatus = getRecordingDisplayStatus(r);
     const isReady = String(r?.status || '').toLowerCase() === 'ready';
@@ -350,8 +353,22 @@ async function loadRecordings() {
   });
 }
 
+function updateNowPlayingLabel(recording) {
+  const label = document.querySelector('#nowPlaying');
+  if (!label) return;
+  if (!recording) {
+    label.textContent = 'Now Playing: Not playing';
+    return;
+  }
+  const serviceName = recording?.metadata?.service_name || recording?.metadata?.serviceDisplayName;
+  const pieces = [recording.title];
+  if (serviceName) pieces.push(serviceName);
+  label.textContent = `Now Playing: ${pieces.join(' / ')}`;
+}
+
 function playRecording(id) {
   const player = document.querySelector('#player');
+  const recording = recordingById.get(String(id));
   const src = toApiUrl(`/recordings/${id}/recording.m3u8`);
   if (player.canPlayType('application/vnd.apple.mpegurl')) {
     player.src = src;
@@ -361,7 +378,9 @@ function playRecording(id) {
     hls.attachMedia(player);
   } else {
     alert('HLS playback is not supported in this browser.');
+    return;
   }
+  updateNowPlayingLabel(recording);
   player.play();
 }
 
