@@ -34,6 +34,12 @@ audio { width: 100%; background: #f0f2f7; }
   overflow: visible;
 }
 
+#seriesList,
+#eventsList {
+  max-height: none;
+  overflow: visible;
+}
+
 
 .player-controls { display: flex; gap: 8px; margin: 8px 0; }
 
