@@ -306,13 +306,14 @@ function buildReservationGroup(row) {
 function renderReservationItem(row) {
   const li = document.createElement('li');
   const event = row.payload?.event || {};
+  const reservationLabel = event.name || row.payload?.series_title || row.payload?.metadata?.series_title || '';
   const metadataHtml = row.type === 'series_watch'
     ? renderSeriesWatchMetadata(row.payload)
     : renderReservationMetadata(row.payload?.metadata);
   li.innerHTML = `<b>${row.type}</b> <span class="small">${row.status} / ${row.id}</span>
     ${event.name ? `<div class="small"><b>${escapeHtml(event.name)}</b> (${fmt(event.startDate)} - ${fmt(event.endDate)})</div>` : ''}
     ${metadataHtml || `<div class="small">${escapeHtml(JSON.stringify(row.payload))}</div>`}
-    <div class="actions"><button data-rid="${row.id}" class="delete-reservation">Delete</button></div>`;
+    <div class="actions"><button data-rid="${row.id}" data-rlabel="${escapeHtml(reservationLabel)}" class="delete-reservation">Delete</button></div>`;
   return li;
 }
 
@@ -347,7 +348,7 @@ async function loadRecordings() {
         <button data-rec="${r.id}" class="play" ${isReady ? '' : 'disabled'}>Play</button>
         ${isReady ? `<a href="${toApiUrl(`/recordings/${r.id}/download`)}"><button>Download m4a</button></a>` : ''}
         <button data-rec="${r.id}" class="edit-meta">Edit metadata</button>
-        <button data-rec="${r.id}" class="delete-recording">Delete</button>
+        <button data-rec="${r.id}" data-rtitle="${escapeHtml(r.title || '')}" class="delete-recording">Delete</button>
       </div>`;
     ul.appendChild(li);
   });
@@ -449,6 +450,8 @@ document.addEventListener('click', async (e) => {
   if (e.target.matches('.show-events')) await showEvents(e.target.dataset.sid, e.target.dataset.scode, e.target.dataset.surl);
   if (e.target.matches('.watch-series')) await reserveSeries(e.target.dataset.sid, e.target.dataset.scode, e.target.dataset.surl);
   if (e.target.matches('.delete-reservation')) {
+    const reservationLabel = e.target.dataset.rlabel ? `\n\nReservation: ${e.target.dataset.rlabel}` : '';
+    if (!window.confirm(`Delete this reservation?${reservationLabel}`)) return;
     await api(`/reservations/${e.target.dataset.rid}`, { method: 'DELETE' });
     await loadReservations();
   }
@@ -462,6 +465,8 @@ document.addEventListener('click', async (e) => {
   if (e.target.matches('.play')) playRecording(e.target.dataset.rec);
   if (e.target.matches('.edit-meta')) await editMetadata(e.target.dataset.rec);
   if (e.target.matches('.delete-recording')) {
+    const recordingTitle = e.target.dataset.rtitle ? `\n\nRecording: ${e.target.dataset.rtitle}` : '';
+    if (!window.confirm(`Delete this recording?${recordingTitle}`)) return;
     await api(`/recordings/${e.target.dataset.rec}`, { method: 'DELETE' });
     await loadRecordings();
   }
