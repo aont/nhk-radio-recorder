@@ -12,6 +12,28 @@ function debugLog(...args) {
 }
 
 const BACKEND_BASE_URI_KEY = 'nhkRadioRecorder.backendBaseUri';
+const DEFAULT_TAB = 'recordings';
+
+function activateTab(tabName) {
+  document.querySelectorAll('.tab-button').forEach((button) => {
+    const isActive = button.dataset.tab === tabName;
+    button.classList.toggle('active', isActive);
+    button.setAttribute('aria-selected', String(isActive));
+  });
+
+  document.querySelectorAll('.tab-panel').forEach((panel) => {
+    panel.hidden = panel.dataset.panel !== tabName;
+  });
+}
+
+function initTabs() {
+  const tabButtons = document.querySelectorAll('.tab-button');
+  if (!tabButtons.length) return;
+  tabButtons.forEach((button) => {
+    button.onclick = () => activateTab(button.dataset.tab);
+  });
+  activateTab(DEFAULT_TAB);
+}
 
 function normalizeBackendBaseUri(value) {
   const raw = String(value || '').trim();
@@ -473,6 +495,7 @@ document.addEventListener('click', async (e) => {
 });
 
 initBackendBaseUriSettings();
+initTabs();
 loadReservations();
 loadRecordings();
 debugLog('frontend debug enabled', { DEBUG_LOG, query: window.location.search });

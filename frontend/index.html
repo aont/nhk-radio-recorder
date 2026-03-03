@@ -13,7 +13,14 @@
   </header>
 
   <main>
-    <section>
+    <nav class="tab-nav" aria-label="Main sections">
+      <button type="button" class="tab-button" data-tab="series-events">Series Browser and Events</button>
+      <button type="button" class="tab-button" data-tab="reservations">Reservations</button>
+      <button type="button" class="tab-button" data-tab="recordings">Recordings</button>
+      <button type="button" class="tab-button" data-tab="configuration">Configuration</button>
+    </nav>
+
+    <section class="tab-panel" data-panel="configuration">
       <h2>Backend Connection</h2>
       <div class="filters">
         <input id="backendBaseUri" placeholder="https://api.example.com" />
@@ -22,7 +29,7 @@
       <div id="backendBaseUriStatus" class="small"></div>
     </section>
 
-    <section>
+    <section class="tab-panel" data-panel="series-events">
       <h2>Series Browser</h2>
       <div class="filters">
         <input id="keyword" placeholder="Search title" />
@@ -34,15 +41,13 @@
         <button id="loadSeries">Load Series</button>
       </div>
       <ul id="seriesList"></ul>
-    </section>
 
-    <section>
       <h2>Events</h2>
       <div id="eventTarget">Select a series.</div>
       <ul id="eventsList"></ul>
     </section>
 
-    <section>
+    <section class="tab-panel" data-panel="reservations">
       <h2>Reservations</h2>
       <button id="refreshReservations">Refresh</button>
       <h3>Series</h3>
@@ -51,7 +56,7 @@
       <ul id="singleEventReservationList"></ul>
     </section>
 
-    <section class="player-section">
+    <section class="tab-panel player-section" data-panel="recordings">
       <h2>Recordings</h2>
       <button id="refreshRecordings">Refresh</button>
       <button id="bulkDownload">Bulk Download Selected (ZIP no compression)</button>
