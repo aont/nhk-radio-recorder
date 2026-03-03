@@ -37,7 +37,7 @@ EVENT_URL_TMPL = "https://api.nhk.jp/r7/f/broadcastevent/rs/{series_key}.json?of
 EVENT_LOOKAHEAD_DAYS = 7
 CONFIG_URL = "https://www.nhk.or.jp/radio/config/config_web.xml"
 SERIES_CACHE_TTL = timedelta(hours=1)
-SERIES_WATCH_EXPAND_INTERVAL_SECONDS = 60 * 60
+SERIES_WATCH_EXPAND_INTERVAL_SECONDS = 5 * 60
 RECORDING_END_DELAY_SECONDS = 60
 
 logging.basicConfig(level=logging.INFO)
@@ -419,6 +419,51 @@ class NHKClient:
             logger.info("[debug] fetch_events filtered: %d rows", len(out))
         return out
 
+    async def fetch_episode(self, episode_api_url: str) -> dict[str, Any] | None:
+        if not episode_api_url:
+            return None
+        status, payload = await self._get_json(episode_api_url)
+        if status == 404 or not isinstance(payload, dict):
+            return None
+        result = payload.get("result")
+        if isinstance(result, list) and result:
+            result = result[0]
+        if not isinstance(result, dict):
+            return None
+        return result
+
+    async def enrich_event_with_episode(self, event: dict[str, Any]) -> dict[str, Any]:
+        episode_api_url = str(event.get("episodeApiUrl") or "")
+        if not episode_api_url:
+            return event
+        try:
+            episode = await self.fetch_episode(episode_api_url)
+        except Exception:
+            logger.warning("episode fetch failed: %s", episode_api_url)
+            return event
+        if not episode:
+            return event
+
+        enriched = dict(event)
+        if episode.get("name"):
+            enriched["name"] = episode["name"]
+        if episode.get("description"):
+            enriched["description"] = episode["description"]
+        if isinstance(episode.get("detailedDescription"), dict):
+            merged_dd = dict(enriched.get("detailedDescription") or {})
+            for key, value in episode["detailedDescription"].items():
+                if str(value).strip():
+                    merged_dd[key] = str(value).strip()
+            enriched["detailedDescription"] = merged_dd
+        misc = episode.get("misc") or {}
+        if isinstance(misc, dict) and isinstance(misc.get("musicList"), list):
+            enriched["musicList"] = misc["musicList"]
+        if episode.get("startDate"):
+            enriched["startDate"] = episode["startDate"]
+        if episode.get("endDate"):
+            enriched["endDate"] = episode["endDate"]
+        return enriched
+
     async def fetch_stream_catalog(self) -> dict[str, dict[str, Any]]:
         xml_text = await self._get_text(CONFIG_URL)
         root = ElementTree.fromstring(xml_text)
@@ -484,6 +529,7 @@ class RecorderService:
     async def _expand_series_watchers(self) -> None:
         reservations = await read_json(self.app["db"], RESERVATIONS_FILE)
         changed = False
+        cancellation_tasks: list[asyncio.Task[Any]] = []
         for r in reservations:
             if r["type"] != "series_watch" or r["status"] != "pending":
                 continue
@@ -491,7 +537,50 @@ class RecorderService:
             seen = set(payload.setdefault("seen_broadcast_event_ids", []))
             series_key = str(payload.get("series_code") or payload["series_id"])
             events = await self.app["nhk"].fetch_events(series_key)
+            enriched_events: list[dict[str, Any]] = []
             for ev in events:
+                enriched_events.append(await self.app["nhk"].enrich_event_with_episode(ev))
+
+            active_events_by_id = {
+                ev.get("broadcastEventId"): ev
+                for ev in enriched_events
+                if ev.get("broadcastEventId")
+            }
+
+            linked_reservations = [
+                x
+                for x in reservations
+                if x["type"] == "single_event"
+                and x.get("payload", {}).get("from_series_watch") == r["id"]
+                and x["status"] in {"pending", "scheduled"}
+            ]
+
+            for linked in linked_reservations:
+                linked_event = linked.get("payload", {}).get("event", {})
+                linked_beid = linked_event.get("broadcastEventId")
+                if not linked_beid:
+                    continue
+                current_event = active_events_by_id.get(linked_beid)
+                if current_event is None:
+                    linked["status"] = "cancelled"
+                    changed = True
+                    task = self.active_recording_tasks.pop(linked["id"], None)
+                    if task:
+                        task.cancel()
+                        cancellation_tasks.append(task)
+                    continue
+                if linked_event != current_event:
+                    linked["payload"]["event"] = current_event
+                    linked["payload"]["metadata"] = build_reservation_metadata(
+                        payload.get("series_id"), payload.get("series_code"), current_event
+                    )
+                    changed = True
+                    task = self.active_recording_tasks.pop(linked["id"], None)
+                    if task:
+                        task.cancel()
+                        cancellation_tasks.append(task)
+
+            for ev in enriched_events:
                 beid = ev.get("broadcastEventId")
                 if not beid or beid in seen:
                     continue
@@ -519,6 +608,9 @@ class RecorderService:
             payload["seen_broadcast_event_ids"] = sorted(seen)
         if changed:
             await write_json(self.app["db"], RESERVATIONS_FILE, reservations)
+        if cancellation_tasks:
+            with contextlib.suppress(asyncio.CancelledError):
+                await asyncio.gather(*cancellation_tasks)
 
     async def _run_due_recordings(self) -> None:
         reservations = await read_json(self.app["db"], RESERVATIONS_FILE)
