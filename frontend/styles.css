@@ -113,3 +113,10 @@ textarea {
   gap: 8px;
   margin-bottom: 8px;
 }
+
+.bulk-upload-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}

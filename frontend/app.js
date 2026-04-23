@@ -21,6 +21,12 @@ function setYoutubeAccountStatus(message) {
   statusEl.textContent = message;
 }
 
+function setBulkUploadStatus(message) {
+  const statusEl = document.querySelector('#bulkUploadStatus');
+  if (!statusEl) return;
+  statusEl.textContent = message;
+}
+
 function parseYoutubeHeadersInput(rawText) {
   const raw = String(rawText || '').trim();
   if (!raw) throw new Error('HTTP headers JSON is required.');
@@ -39,14 +45,29 @@ function parseYoutubeHeadersInput(rawText) {
 async function loadYoutubeAccounts() {
   const rows = await (await api('/youtube-accounts')).json();
   const ul = document.querySelector('#youtubeAccountList');
+  const select = document.querySelector('#bulkUploadYoutubeAccount');
   if (!ul) return;
   ul.innerHTML = '';
+  if (select) select.innerHTML = '';
   if (!rows.length) {
     const empty = document.createElement('li');
     empty.className = 'small';
     empty.textContent = 'No YouTube accounts are configured.';
     ul.appendChild(empty);
+    if (select) {
+      const option = document.createElement('option');
+      option.value = '';
+      option.textContent = 'No YouTube accounts';
+      select.appendChild(option);
+    }
     return;
+  }
+
+  if (select) {
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = 'Choose YouTube account';
+    select.appendChild(placeholder);
   }
 
   rows.forEach((row) => {
@@ -58,6 +79,12 @@ async function loadYoutubeAccounts() {
         <button data-yid="${escapeHtml(row.id || '')}" class="delete-youtube-account">Delete</button>
       </div>`;
     ul.appendChild(li);
+    if (select) {
+      const option = document.createElement('option');
+      option.value = row.id || '';
+      option.textContent = `${row.alias || 'Untitled account'} (${row.id || ''})`;
+      select.appendChild(option);
+    }
   });
 }
 
@@ -539,12 +566,38 @@ async function bulkDownload() {
   a.click();
 }
 
+async function bulkUploadToYoutube() {
+  const ids = [...document.querySelectorAll('.bulk:checked')].map(x => x.value);
+  if (!ids.length) return alert('No recordings selected.');
+
+  const select = document.querySelector('#bulkUploadYoutubeAccount');
+  const accountId = select ? String(select.value || '').trim() : '';
+  if (!accountId) {
+    setBulkUploadStatus('Please choose a YouTube account first.');
+    return;
+  }
+
+  setBulkUploadStatus(`Uploading ${ids.length} recording(s)...`);
+  const res = await api('/recordings/bulk-upload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids, account_id: accountId })
+  });
+  const payload = await res.json();
+  const results = Array.isArray(payload?.results) ? payload.results : [];
+  const successCount = results.filter((row) => row.status === 'uploaded').length;
+  const failCount = results.length - successCount;
+  setBulkUploadStatus(`Upload finished. success=${successCount}, failed=${failCount}`);
+  await loadRecordings();
+}
+
 document.querySelector('#loadSeries').onclick = loadSeries;
 document.querySelector('#keyword').oninput = renderSeries;
 document.querySelector('#broadcastFilter').onchange = renderSeries;
 document.querySelector('#refreshReservations').onclick = loadReservations;
 document.querySelector('#refreshRecordings').onclick = loadRecordings;
 document.querySelector('#bulkDownload').onclick = bulkDownload;
+document.querySelector('#bulkUploadToYoutube').onclick = bulkUploadToYoutube;
 document.querySelector('#seekBack10').onclick = () => seekPlayerBy(-10);
 document.querySelector('#seekForward10').onclick = () => seekPlayerBy(10);
 document.querySelector('#addYoutubeAccount').onclick = addYoutubeAccount;

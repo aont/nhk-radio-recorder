@@ -264,6 +264,13 @@ async def write_youtube_accounts(db: aiosqlite.Connection, accounts: list[dict[s
     await _db_set_json(db, "youtube_accounts", accounts)
 
 
+async def get_youtube_account_by_id(db: aiosqlite.Connection, account_id: str) -> dict[str, Any] | None:
+    for account in await read_youtube_accounts(db):
+        if account.get("id") == account_id:
+            return account
+    return None
+
+
 async def read_json(db: aiosqlite.Connection, path: Path) -> list[dict[str, Any]]:
     payload = await _db_get_json(db, _db_key(path), [])
     if not isinstance(payload, list):
@@ -543,13 +550,49 @@ class YouTubeMusicUploader:
             logger.info("youtube upload skipped: no configured accounts")
             return
 
+        await self.upload_recording_for_accounts(app, rec_id, accounts)
+
+    async def upload_recording_for_accounts(
+        self,
+        app: web.Application,
+        rec_id: str,
+        accounts: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         rec = await _recording_by_id(app["db"], rec_id)
         if not rec:
-            return
+            return []
 
+        results: list[dict[str, Any]] = []
         for account in accounts:
             result = await self._upload_for_account(rec, account)
             await self._append_upload_result(app["db"], rec_id, result)
+            results.append(result)
+        return results
+
+    async def upload_recordings_for_account(
+        self,
+        app: web.Application,
+        recording_ids: list[str],
+        account: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for rec_id in recording_ids:
+            rec = await _recording_by_id(app["db"], rec_id)
+            if not rec:
+                rows.append(
+                    {
+                        "recording_id": rec_id,
+                        "status": "not_found",
+                        "account_id": account.get("id"),
+                        "alias": account.get("alias"),
+                    }
+                )
+                continue
+            results = await self.upload_recording_for_accounts(app, rec_id, [account])
+            row = results[0] if results else {"status": "failed", "detail": "upload did not run"}
+            row["recording_id"] = rec_id
+            rows.append(row)
+        return rows
 
     async def _upload_for_account(self, rec: dict[str, Any], account: dict[str, Any]) -> dict[str, Any]:
         rec_dir = RECORDINGS_DIR / rec["id"]
@@ -1147,6 +1190,31 @@ async def api_recordings_bulk_download(request: web.Request) -> web.StreamRespon
     return web.FileResponse(zippath, headers={"Content-Disposition": 'attachment; filename="recordings.zip"'})
 
 
+async def api_recordings_bulk_upload(request: web.Request) -> web.Response:
+    payload = await request.json()
+    ids = payload.get("ids", [])
+    account_id = str(payload.get("account_id") or "").strip()
+    if not isinstance(ids, list) or not ids:
+        raise web.HTTPBadRequest(text="ids must be a non-empty array")
+    if not account_id:
+        raise web.HTTPBadRequest(text="account_id is required")
+
+    normalized_ids = [str(rec_id).strip() for rec_id in ids if str(rec_id).strip()]
+    if not normalized_ids:
+        raise web.HTTPBadRequest(text="ids must include non-empty recording ids")
+
+    account = await get_youtube_account_by_id(request.app["db"], account_id)
+    if not account:
+        raise web.HTTPNotFound(text="youtube account not found")
+
+    results = await request.app["youtube_uploader"].upload_recordings_for_account(
+        request.app,
+        normalized_ids,
+        account,
+    )
+    return web.json_response({"ok": True, "results": results})
+
+
 async def api_recordings_delete(request: web.Request) -> web.Response:
     rec_id = request.match_info["recording_id"]
     rec_dir = RECORDINGS_DIR / rec_id
@@ -1224,6 +1292,7 @@ async def create_app() -> web.Application:
     app.router.add_patch("/recordings/{recording_id}/metadata", api_recordings_patch_metadata)
     app.router.add_get("/recordings/{recording_id}/download", api_recordings_download)
     app.router.add_post("/recordings/bulk-download", api_recordings_bulk_download)
+    app.router.add_post("/recordings/bulk-upload", api_recordings_bulk_upload)
     app.router.add_delete("/recordings/{recording_id}", api_recordings_delete)
     app.router.add_static("/recordings", RECORDINGS_DIR)
 
