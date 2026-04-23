@@ -73,6 +73,16 @@
       <h2>Recordings</h2>
       <button id="refreshRecordings">Refresh</button>
       <button id="bulkDownload">Bulk Download Selected (ZIP no compression)</button>
+      <div class="filters">
+        <select id="youtubeUploadRecordingSelect">
+          <option value="">Select recording</option>
+        </select>
+        <select id="youtubeUploadAccountSelect">
+          <option value="">Select YouTube account</option>
+        </select>
+        <button id="uploadSelectedRecordingToYoutube" type="button">Upload to selected YouTube account</button>
+      </div>
+      <div id="youtubeUploadStatus" class="small"></div>
       <ul id="recordingList"></ul>
       <h3>Player</h3>
       <div class="player-controls">

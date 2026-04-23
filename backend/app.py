@@ -551,6 +551,20 @@ class YouTubeMusicUploader:
             result = await self._upload_for_account(rec, account)
             await self._append_upload_result(app["db"], rec_id, result)
 
+    async def upload_recording_for_account(self, app: web.Application, rec_id: str, account_id: str) -> dict[str, Any]:
+        rec = await _recording_by_id(app["db"], rec_id)
+        if not rec:
+            raise web.HTTPNotFound(text="recording not found")
+
+        accounts = await read_youtube_accounts(app["db"])
+        account = next((a for a in accounts if str(a.get("id")) == account_id), None)
+        if not account:
+            raise web.HTTPNotFound(text="youtube account not found")
+
+        result = await self._upload_for_account(rec, account)
+        await self._append_upload_result(app["db"], rec_id, result)
+        return result
+
     async def _upload_for_account(self, rec: dict[str, Any], account: dict[str, Any]) -> dict[str, Any]:
         rec_dir = RECORDINGS_DIR / rec["id"]
         m4a = rec_dir / "download.m4a"
@@ -1157,6 +1171,17 @@ async def api_recordings_delete(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+async def api_recordings_upload_to_youtube(request: web.Request) -> web.Response:
+    rec_id = request.match_info["recording_id"]
+    payload = await request.json()
+    account_id = str(payload.get("account_id") or "").strip()
+    if not account_id:
+        raise web.HTTPBadRequest(text="account_id is required")
+
+    result = await request.app["youtube_uploader"].upload_recording_for_account(request.app, rec_id, account_id)
+    return web.json_response(result)
+
+
 async def api_youtube_accounts_get(request: web.Request) -> web.Response:
     accounts = await read_youtube_accounts(request.app["db"])
     sanitized = [{k: v for k, v in a.items() if k != "headers"} for a in accounts]
@@ -1223,6 +1248,7 @@ async def create_app() -> web.Application:
     app.router.add_get("/recordings", api_recordings_get)
     app.router.add_patch("/recordings/{recording_id}/metadata", api_recordings_patch_metadata)
     app.router.add_get("/recordings/{recording_id}/download", api_recordings_download)
+    app.router.add_post("/recordings/{recording_id}/youtube-upload", api_recordings_upload_to_youtube)
     app.router.add_post("/recordings/bulk-download", api_recordings_bulk_download)
     app.router.add_delete("/recordings/{recording_id}", api_recordings_delete)
     app.router.add_static("/recordings", RECORDINGS_DIR)

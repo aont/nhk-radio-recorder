@@ -46,6 +46,7 @@ Use `--debug-log` if you want verbose backend logs.
 - `GET /recordings`
 - `PATCH /recordings/{recording_id}/metadata`
 - `GET /recordings/{recording_id}/download`
+- `POST /recordings/{recording_id}/youtube-upload`
 - `POST /recordings/bulk-download`
 - `DELETE /recordings/{recording_id}`
 
@@ -71,3 +72,4 @@ Use `--debug-log` if you want verbose backend logs.
 - Add one or more YouTube accounts from the **Configuration** tab.
 - Each account needs an alias and HTTP headers JSON required by `ytmusicapi`.
 - Every completed recording is uploaded to all configured accounts.
+- You can also upload a past recording manually from the **Recordings** tab by selecting a recording and target account.

@@ -21,6 +21,12 @@ function setYoutubeAccountStatus(message) {
   statusEl.textContent = message;
 }
 
+function setYoutubeUploadStatus(message) {
+  const statusEl = document.querySelector('#youtubeUploadStatus');
+  if (!statusEl) return;
+  statusEl.textContent = message;
+}
+
 function parseYoutubeHeadersInput(rawText) {
   const raw = String(rawText || '').trim();
   if (!raw) throw new Error('HTTP headers JSON is required.');
@@ -39,8 +45,12 @@ function parseYoutubeHeadersInput(rawText) {
 async function loadYoutubeAccounts() {
   const rows = await (await api('/youtube-accounts')).json();
   const ul = document.querySelector('#youtubeAccountList');
+  const uploadAccountSelect = document.querySelector('#youtubeUploadAccountSelect');
   if (!ul) return;
   ul.innerHTML = '';
+  if (uploadAccountSelect) {
+    uploadAccountSelect.innerHTML = '<option value="">Select YouTube account</option>';
+  }
   if (!rows.length) {
     const empty = document.createElement('li');
     empty.className = 'small';
@@ -50,6 +60,12 @@ async function loadYoutubeAccounts() {
   }
 
   rows.forEach((row) => {
+    if (uploadAccountSelect) {
+      const option = document.createElement('option');
+      option.value = row.id || '';
+      option.textContent = row.alias || 'Untitled account';
+      uploadAccountSelect.appendChild(option);
+    }
     const li = document.createElement('li');
     li.innerHTML = `<b>${escapeHtml(row.alias || 'Untitled account')}</b>
       <span class="small">${escapeHtml(row.id || '')}</span>
@@ -434,10 +450,20 @@ async function loadRecordings() {
   const rows = await (await api('/recordings')).json();
   debugLog('loadRecordings count', rows.length);
   const ul = document.querySelector('#recordingList');
+  const uploadRecordingSelect = document.querySelector('#youtubeUploadRecordingSelect');
   ul.innerHTML = '';
+  if (uploadRecordingSelect) {
+    uploadRecordingSelect.innerHTML = '<option value="">Select recording</option>';
+  }
   recordingById.clear();
   rows.forEach(r => {
     recordingById.set(String(r.id), r);
+    if (uploadRecordingSelect && String(r?.status || '').toLowerCase() === 'ready') {
+      const option = document.createElement('option');
+      option.value = String(r.id);
+      option.textContent = `${r.title || 'Untitled'} (${fmt(r.start_date) || r.id})`;
+      uploadRecordingSelect.appendChild(option);
+    }
     const li = document.createElement('li');
     const displayStatus = getRecordingDisplayStatus(r);
     const isReady = String(r?.status || '').toLowerCase() === 'ready';
@@ -454,6 +480,41 @@ async function loadRecordings() {
       </div>`;
     ul.appendChild(li);
   });
+}
+
+async function uploadSelectedRecordingToYoutube() {
+  const recordingSelect = document.querySelector('#youtubeUploadRecordingSelect');
+  const accountSelect = document.querySelector('#youtubeUploadAccountSelect');
+  if (!recordingSelect || !accountSelect) return;
+
+  const recordingId = String(recordingSelect.value || '').trim();
+  const accountId = String(accountSelect.value || '').trim();
+  if (!recordingId) {
+    setYoutubeUploadStatus('Please select a recording.');
+    return;
+  }
+  if (!accountId) {
+    setYoutubeUploadStatus('Please select a YouTube account.');
+    return;
+  }
+
+  setYoutubeUploadStatus('Uploading to YouTube...');
+  try {
+    const res = await api(`/recordings/${recordingId}/youtube-upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account_id: accountId })
+    });
+    const result = await res.json();
+    if (result?.status === 'uploaded') {
+      setYoutubeUploadStatus(`Upload completed: ${result.alias || accountId}`);
+    } else {
+      setYoutubeUploadStatus(`Upload failed: ${result?.detail || 'Unknown error'}`);
+    }
+    await loadRecordings();
+  } catch (err) {
+    setYoutubeUploadStatus(err.message || String(err));
+  }
 }
 
 function updateNowPlayingLabel(recording) {
@@ -548,6 +609,7 @@ document.querySelector('#bulkDownload').onclick = bulkDownload;
 document.querySelector('#seekBack10').onclick = () => seekPlayerBy(-10);
 document.querySelector('#seekForward10').onclick = () => seekPlayerBy(10);
 document.querySelector('#addYoutubeAccount').onclick = addYoutubeAccount;
+document.querySelector('#uploadSelectedRecordingToYoutube').onclick = uploadSelectedRecordingToYoutube;
 
 document.addEventListener('click', async (e) => {
   if (e.target.matches('.show-events')) await showEvents(e.target.dataset.sid, e.target.dataset.scode, e.target.dataset.surl);
