@@ -441,6 +441,7 @@ class NHKClient:
                     "episodeUrl": about.get("canonical") or None,
                     "seriesApiUrl": part_of_series.get("url") or None,
                     "seriesUrl": part_of_series.get("canonical") or None,
+                    "seriesTitle": part_of_series.get("name") or part_of_series.get("headline") or None,
                     "radioEpisodeId": ig.get("radioEpisodeId"),
                     "radioSeriesId": ig.get("radioSeriesId"),
                     "genres": genres,
@@ -495,6 +496,10 @@ class NHKClient:
             enriched["startDate"] = episode["startDate"]
         if episode.get("endDate"):
             enriched["endDate"] = episode["endDate"]
+        episode_about = episode.get("about") or {}
+        episode_series = episode_about.get("partOfSeries") or {}
+        if episode_series.get("name"):
+            enriched["seriesTitle"] = episode_series["name"]
         return enriched
 
     async def fetch_stream_catalog(self) -> dict[str, dict[str, Any]]:
@@ -670,7 +675,10 @@ class RecorderService:
                 if linked_event != current_event:
                     linked["payload"]["event"] = current_event
                     linked["payload"]["metadata"] = build_reservation_metadata(
-                        payload.get("series_id"), payload.get("series_code"), current_event
+                        payload.get("series_id"),
+                        payload.get("series_code"),
+                        current_event,
+                        payload.get("series_title"),
                     )
                     changed = True
                     task = self.active_recording_tasks.pop(linked["id"], None)
@@ -696,7 +704,12 @@ class RecorderService:
                                 "series_code": payload.get("series_code"),
                                 "event": ev,
                                 "from_series_watch": r["id"],
-                                "metadata": build_reservation_metadata(payload["series_id"], payload.get("series_code"), ev),
+                                "metadata": build_reservation_metadata(
+                                    payload["series_id"],
+                                    payload.get("series_code"),
+                                    ev,
+                                    payload.get("series_title"),
+                                ),
                             },
                         )
                     )
@@ -834,7 +847,8 @@ class RecorderService:
             await self._mark_reservation(reservation["id"], "failed")
             return
 
-        metadata = build_metadata_tags(event)
+        reservation_metadata = reservation["payload"].get("metadata") or {}
+        metadata = build_metadata_tags(event, reservation_metadata)
         async with RECORDINGS_LOCK:
             recordings = await read_json(self.app["db"], RECORDINGS_FILE)
             recordings.append(
@@ -893,13 +907,22 @@ class RecorderService:
         await write_json(self.app["db"], RESERVATIONS_FILE, reservations)
 
 
-def build_metadata_tags(event: dict[str, Any]) -> dict[str, str]:
+def build_metadata_tags(event: dict[str, Any], reservation_metadata: dict[str, str] | None = None) -> dict[str, str]:
     dd = event.get("detailedDescription") or {}
     description = dd.get("epg80") or dd.get("epg40") or event.get("description") or ""
+    reservation_metadata = reservation_metadata or {}
+    series_title = str(
+        reservation_metadata.get("series_title")
+        or event.get("seriesTitle")
+        or ""
+    ).strip()
     tags = {
         "title": event.get("name") or "Untitled",
         "description": description,
     }
+    if series_title:
+        tags["album"] = series_title
+        tags["series_title"] = series_title
     if dd.get("epg200"):
         tags["long_description"] = dd["epg200"]
     if dd.get("epgInformation"):
@@ -917,10 +940,17 @@ def build_metadata_tags(event: dict[str, Any]) -> dict[str, str]:
     return tags
 
 
-def build_reservation_metadata(series_id: Any, series_code: Any, event: dict[str, Any]) -> dict[str, str]:
+def build_reservation_metadata(
+    series_id: Any,
+    series_code: Any,
+    event: dict[str, Any],
+    series_title: Any = None,
+) -> dict[str, str]:
+    resolved_series_title = str(series_title or event.get("seriesTitle") or "").strip()
     return {
         "series_id": str(series_id or ""),
         "series_code": str(series_code or ""),
+        "series_title": resolved_series_title,
         "broadcast_event_id": str(event.get("broadcastEventId") or ""),
         "radio_series_id": str(event.get("radioSeriesId") or ""),
         "radio_episode_id": str(event.get("radioEpisodeId") or ""),
@@ -1009,6 +1039,7 @@ async def _create_reservation(request: web.Request, reservation_type: str, reser
             reservation_payload.get("series_id"),
             reservation_payload.get("series_code"),
             reservation_payload.get("event") or {},
+            reservation_payload.get("series_title"),
         )
     if reservation_type == "series_watch":
         reservation_payload["metadata"] = build_series_watch_metadata(

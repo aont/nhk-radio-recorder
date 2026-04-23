@@ -265,7 +265,12 @@ async function resolveSeriesCode(seriesCode, seriesUrl) {
 
 async function showEvents(seriesId, seriesCode, seriesUrl) {
   const resolvedSeriesCode = await resolveSeriesCode(seriesCode, seriesUrl);
-  selectedSeries = { seriesId, seriesCode: resolvedSeriesCode };
+  const seriesInfo = seriesCache.find((s) => String(s.id) === String(seriesId));
+  selectedSeries = {
+    seriesId,
+    seriesCode: resolvedSeriesCode,
+    seriesTitle: seriesInfo?.title || null
+  };
   document.querySelector('#eventTarget').textContent = `Series: ${resolvedSeriesCode || seriesId}`;
   debugLog('showEvents start', { seriesId, seriesCode, seriesUrl, resolvedSeriesCode });
   const key = encodeURIComponent(resolvedSeriesCode || String(seriesId));
@@ -301,6 +306,7 @@ async function reserveEvent(event) {
     body: JSON.stringify({
       series_id: selectedSeries.seriesId,
       series_code: selectedSeries.seriesCode || null,
+      series_title: selectedSeries.seriesTitle || null,
       event
     })
   });
