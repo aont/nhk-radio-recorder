@@ -3,6 +3,7 @@
 This project provides:
 
 - **Backend recording service** with Python `aiohttp` and `ffmpeg`
+- Optional **YouTube Music upload** via `ytmusicapi` after each recording completes
 - **Frontend (HTML/CSS/JavaScript)** for:
   - adding/removing reservations
   - playback of HLS recordings
@@ -63,3 +64,10 @@ Use `--debug-log` if you want verbose backend logs.
   - `r1 -> r1`
   - `r2 -> r2`
   - `r3 -> fm`
+
+
+## YouTube Music upload
+
+- Add one or more YouTube accounts from the **Configuration** tab.
+- Each account needs an alias and HTTP headers JSON required by `ytmusicapi`.
+- Every completed recording is uploaded to all configured accounts.

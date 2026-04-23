@@ -27,6 +27,19 @@
         <button id="saveBackendBaseUri" type="button">Save backend URI</button>
       </div>
       <div id="backendBaseUriStatus" class="small"></div>
+
+      <h2>YouTube Music Accounts</h2>
+      <p class="small">Add one or more YouTube accounts. Each completed recording will be uploaded to all configured accounts.</p>
+      <div class="yt-account-form">
+        <input id="youtubeAlias" placeholder="Alias (e.g. Personal Account)" />
+        <textarea id="youtubeHeaders" rows="8" placeholder='{
+  "cookie": "...",
+  "x-goog-authuser": "0"
+}'></textarea>
+        <button id="addYoutubeAccount" type="button">Add YouTube account</button>
+      </div>
+      <div id="youtubeAccountStatus" class="small"></div>
+      <ul id="youtubeAccountList"></ul>
     </section>
 
     <section class="tab-panel" data-panel="series-events">

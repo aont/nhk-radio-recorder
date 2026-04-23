@@ -102,3 +102,14 @@ audio { width: 100%; background: #f0f2f7; }
 .tab-panel[hidden] {
   display: none;
 }
+
+textarea {
+  padding: 6px;
+  font-family: monospace;
+}
+
+.yt-account-form {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 8px;
+}

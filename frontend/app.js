@@ -14,6 +14,80 @@ function debugLog(...args) {
 const BACKEND_BASE_URI_KEY = 'nhkRadioRecorder.backendBaseUri';
 const DEFAULT_TAB = 'recordings';
 
+
+function setYoutubeAccountStatus(message) {
+  const statusEl = document.querySelector('#youtubeAccountStatus');
+  if (!statusEl) return;
+  statusEl.textContent = message;
+}
+
+function parseYoutubeHeadersInput(rawText) {
+  const raw = String(rawText || '').trim();
+  if (!raw) throw new Error('HTTP headers JSON is required.');
+  let payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch (err) {
+    throw new Error('HTTP headers must be valid JSON.');
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('HTTP headers must be a JSON object.');
+  }
+  return payload;
+}
+
+async function loadYoutubeAccounts() {
+  const rows = await (await api('/youtube-accounts')).json();
+  const ul = document.querySelector('#youtubeAccountList');
+  if (!ul) return;
+  ul.innerHTML = '';
+  if (!rows.length) {
+    const empty = document.createElement('li');
+    empty.className = 'small';
+    empty.textContent = 'No YouTube accounts are configured.';
+    ul.appendChild(empty);
+    return;
+  }
+
+  rows.forEach((row) => {
+    const li = document.createElement('li');
+    li.innerHTML = `<b>${escapeHtml(row.alias || 'Untitled account')}</b>
+      <span class="small">${escapeHtml(row.id || '')}</span>
+      <div class="small">Created: ${escapeHtml(fmt(row.created_at) || row.created_at || '-')}</div>
+      <div class="actions">
+        <button data-yid="${escapeHtml(row.id || '')}" class="delete-youtube-account">Delete</button>
+      </div>`;
+    ul.appendChild(li);
+  });
+}
+
+async function addYoutubeAccount() {
+  const aliasInput = document.querySelector('#youtubeAlias');
+  const headersInput = document.querySelector('#youtubeHeaders');
+  if (!aliasInput || !headersInput) return;
+
+  const alias = String(aliasInput.value || '').trim();
+  if (!alias) {
+    setYoutubeAccountStatus('Alias is required.');
+    return;
+  }
+
+  try {
+    const headers = parseYoutubeHeadersInput(headersInput.value);
+    await api('/youtube-accounts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ alias, headers })
+    });
+    aliasInput.value = '';
+    headersInput.value = '';
+    setYoutubeAccountStatus(`Added account: ${alias}`);
+    await loadYoutubeAccounts();
+  } catch (err) {
+    setYoutubeAccountStatus(err.message || String(err));
+  }
+}
+
 function activateTab(tabName) {
   document.querySelectorAll('.tab-button').forEach((button) => {
     const isActive = button.dataset.tab === tabName;
@@ -467,6 +541,7 @@ document.querySelector('#refreshRecordings').onclick = loadRecordings;
 document.querySelector('#bulkDownload').onclick = bulkDownload;
 document.querySelector('#seekBack10').onclick = () => seekPlayerBy(-10);
 document.querySelector('#seekForward10').onclick = () => seekPlayerBy(10);
+document.querySelector('#addYoutubeAccount').onclick = addYoutubeAccount;
 
 document.addEventListener('click', async (e) => {
   if (e.target.matches('.show-events')) await showEvents(e.target.dataset.sid, e.target.dataset.scode, e.target.dataset.surl);
@@ -486,6 +561,14 @@ document.addEventListener('click', async (e) => {
   }
   if (e.target.matches('.play')) playRecording(e.target.dataset.rec);
   if (e.target.matches('.edit-meta')) await editMetadata(e.target.dataset.rec);
+  if (e.target.matches('.delete-youtube-account')) {
+    const accountId = e.target.dataset.yid;
+    if (!accountId) return;
+    if (!window.confirm('Delete this YouTube account?')) return;
+    await api(`/youtube-accounts/${accountId}`, { method: 'DELETE' });
+    setYoutubeAccountStatus('Deleted YouTube account.');
+    await loadYoutubeAccounts();
+  }
   if (e.target.matches('.delete-recording')) {
     const recordingTitle = e.target.dataset.rtitle ? `\n\nRecording: ${e.target.dataset.rtitle}` : '';
     if (!window.confirm(`Delete this recording?${recordingTitle}`)) return;
@@ -498,4 +581,5 @@ initBackendBaseUriSettings();
 initTabs();
 loadReservations();
 loadRecordings();
+loadYoutubeAccounts();
 debugLog('frontend debug enabled', { DEBUG_LOG, query: window.location.search });

@@ -10,11 +10,14 @@ import shutil
 import tempfile
 import uuid
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 from typing import Any
+
+from ytmusicapi import YTMusic
 from xml.etree import ElementTree
 
 import aiosqlite
@@ -30,6 +33,7 @@ RESERVATIONS_FILE = DATA_DIR / "reservations.json"
 RECORDINGS_FILE = DATA_DIR / "recordings.json"
 SERIES_CACHE_FILE = DATA_DIR / "series_cache.json"
 DATABASE_FILE = DATA_DIR / "app.sqlite3"
+YOUTUBE_ACCOUNTS_FILE = DATA_DIR / "youtube_accounts.json"
 
 SERIES_URL_TMPL = "https://www.nhk.or.jp/radio-api/app/v1/web/series?kana={kana}"
 SERIES_KANA_LIST = ("a", "k", "s", "t", "n", "h", "m", "y", "r", "w")
@@ -133,6 +137,7 @@ class Recording:
     end_date: str
     hls_manifest: str
     metadata: dict[str, str]
+    youtube_uploads: list[dict[str, Any]]
 
 
 def utc_now() -> datetime:
@@ -192,6 +197,7 @@ async def migrate_json_to_sqlite(db: aiosqlite.Connection) -> None:
         ("reservations", RESERVATIONS_FILE, []),
         ("recordings", RECORDINGS_FILE, []),
         ("series_cache", SERIES_CACHE_FILE, {"value": None, "expires_at": datetime.fromtimestamp(0, timezone.utc).isoformat()}),
+        ("youtube_accounts", YOUTUBE_ACCOUNTS_FILE, []),
     )
     for key, path, default in legacy_sources:
         async with db.execute("SELECT 1 FROM app_data WHERE key = ?", (key,)) as cur:
@@ -229,6 +235,33 @@ async def persist_series_cache(db: aiosqlite.Connection, cache: dict[str, Any]) 
         "series_cache",
         {"value": cache.get("value"), "expires_at": cache["expires_at"].isoformat()},
     )
+
+
+async def read_youtube_accounts(db: aiosqlite.Connection) -> list[dict[str, Any]]:
+    payload = await _db_get_json(db, "youtube_accounts", [])
+    if not isinstance(payload, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for account in payload:
+        if not isinstance(account, dict):
+            continue
+        headers = account.get("headers")
+        if not isinstance(headers, dict):
+            headers = {}
+        normalized_headers = {str(k): str(v) for k, v in headers.items() if str(k).strip() and str(v).strip()}
+        out.append(
+            {
+                "id": str(account.get("id") or ""),
+                "alias": str(account.get("alias") or ""),
+                "headers": normalized_headers,
+                "created_at": str(account.get("created_at") or ""),
+            }
+        )
+    return [x for x in out if x["id"] and x["alias"]]
+
+
+async def write_youtube_accounts(db: aiosqlite.Connection, accounts: list[dict[str, Any]]) -> None:
+    await _db_set_json(db, "youtube_accounts", accounts)
 
 
 async def read_json(db: aiosqlite.Connection, path: Path) -> list[dict[str, Any]]:
@@ -490,6 +523,71 @@ class NHKClient:
             if area_slug:
                 out[area_slug] = catalog
         return out
+
+
+class YouTubeMusicUploader:
+    def __init__(self) -> None:
+        self.executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ytm-upload")
+
+    async def close(self) -> None:
+        self.executor.shutdown(wait=False, cancel_futures=True)
+
+    async def upload_recording_for_all_accounts(self, app: web.Application, rec_id: str) -> None:
+        accounts = await read_youtube_accounts(app["db"])
+        if not accounts:
+            logger.info("youtube upload skipped: no configured accounts")
+            return
+
+        rec = await _recording_by_id(app["db"], rec_id)
+        if not rec:
+            return
+
+        for account in accounts:
+            result = await self._upload_for_account(rec, account)
+            await self._append_upload_result(app["db"], rec_id, result)
+
+    async def _upload_for_account(self, rec: dict[str, Any], account: dict[str, Any]) -> dict[str, Any]:
+        rec_dir = RECORDINGS_DIR / rec["id"]
+        m4a = rec_dir / "download.m4a"
+        if not m4a.exists():
+            m4a = await _convert_to_m4a(rec)
+
+        def run_upload() -> dict[str, Any]:
+            auth_file = rec_dir / f"yt_headers_{account['id']}.json"
+            auth_file.write_text(json.dumps(account["headers"], ensure_ascii=False, indent=2), encoding="utf-8")
+            ytmusic = YTMusic(str(auth_file))
+            response = ytmusic.upload_song(str(m4a))
+            return {"response": response}
+
+        try:
+            payload = await asyncio.get_running_loop().run_in_executor(self.executor, run_upload)
+            return {
+                "account_id": account["id"],
+                "alias": account["alias"],
+                "status": "uploaded",
+                "uploaded_at": utc_now().isoformat(),
+                "detail": payload.get("response"),
+            }
+        except Exception as exc:
+            logger.exception("youtube upload failed: rec_id=%s account=%s", rec.get("id"), account.get("alias"))
+            return {
+                "account_id": account["id"],
+                "alias": account["alias"],
+                "status": "failed",
+                "uploaded_at": utc_now().isoformat(),
+                "detail": str(exc),
+            }
+
+    async def _append_upload_result(self, db: aiosqlite.Connection, rec_id: str, result: dict[str, Any]) -> None:
+        async with RECORDINGS_LOCK:
+            recordings = await read_json(db, RECORDINGS_FILE)
+            for rec in recordings:
+                if rec.get("id") != rec_id:
+                    continue
+                uploads = rec.setdefault("youtube_uploads", [])
+                if isinstance(uploads, list):
+                    uploads.append(result)
+            await write_json(db, RECORDINGS_FILE, recordings)
 
 
 class RecorderService:
@@ -755,6 +853,7 @@ class RecorderService:
                         end_date=event["endDate"],
                         hls_manifest=f"/recordings/{rec_id}/recording.m3u8",
                         metadata=metadata,
+                        youtube_uploads=[],
                     )
                 )
             )
@@ -763,6 +862,7 @@ class RecorderService:
         await self._mark_reservation(reservation["id"], "done")
         self._write_recording_debug_state(rec_dir, "reservation_done", {"reservation_id": reservation["id"]})
         logger.info("recording completed: reservation_id=%s rec_id=%s", reservation["id"], rec_id)
+        await self.app["youtube_uploader"].upload_recording_for_all_accounts(self.app, rec_id)
 
     def _write_recording_debug_state(self, rec_dir: Path, state: str, extra: dict[str, Any] | None = None) -> None:
         payload: dict[str, Any] = {
@@ -1026,6 +1126,44 @@ async def api_recordings_delete(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+async def api_youtube_accounts_get(request: web.Request) -> web.Response:
+    accounts = await read_youtube_accounts(request.app["db"])
+    sanitized = [{k: v for k, v in a.items() if k != "headers"} for a in accounts]
+    return web.json_response(sanitized)
+
+
+async def api_youtube_accounts_post(request: web.Request) -> web.Response:
+    payload = await request.json()
+    alias = str(payload.get("alias") or "").strip()
+    headers = payload.get("headers")
+    if not alias:
+        raise web.HTTPBadRequest(text="alias is required")
+    if not isinstance(headers, dict) or not headers:
+        raise web.HTTPBadRequest(text="headers must be a non-empty object")
+    normalized_headers = {str(k).strip(): str(v).strip() for k, v in headers.items() if str(k).strip() and str(v).strip()}
+    if not normalized_headers:
+        raise web.HTTPBadRequest(text="headers must include at least one non-empty key/value")
+
+    accounts = await read_youtube_accounts(request.app["db"])
+    account = {
+        "id": str(uuid.uuid4()),
+        "alias": alias,
+        "headers": normalized_headers,
+        "created_at": utc_now().isoformat(),
+    }
+    accounts.append(account)
+    await write_youtube_accounts(request.app["db"], accounts)
+    return web.json_response({k: v for k, v in account.items() if k != "headers"})
+
+
+async def api_youtube_accounts_delete(request: web.Request) -> web.Response:
+    account_id = request.match_info["account_id"]
+    accounts = await read_youtube_accounts(request.app["db"])
+    accounts = [a for a in accounts if a.get("id") != account_id]
+    await write_youtube_accounts(request.app["db"], accounts)
+    return web.json_response({"ok": True})
+
+
 async def create_app() -> web.Application:
     ensure_dirs()
     timeout = ClientTimeout(total=10)
@@ -1039,6 +1177,7 @@ async def create_app() -> web.Application:
     app["db"] = db
     app["nhk"] = NHKClient(session)
     app["series_cache"] = await load_series_cache(db)
+    app["youtube_uploader"] = YouTubeMusicUploader()
 
     app.router.add_get("/series", api_series)
     app.router.add_get("/series/resolve", api_series_resolve)
@@ -1047,6 +1186,9 @@ async def create_app() -> web.Application:
     app.router.add_post("/reservation/single-event", reservations_post_single_event)
     app.router.add_post("/reservation/watch-series", reservations_post_watch_series)
     app.router.add_delete("/reservations/{reservation_id}", api_reservations_delete)
+    app.router.add_get("/youtube-accounts", api_youtube_accounts_get)
+    app.router.add_post("/youtube-accounts", api_youtube_accounts_post)
+    app.router.add_delete("/youtube-accounts/{account_id}", api_youtube_accounts_delete)
     app.router.add_get("/recordings", api_recordings_get)
     app.router.add_patch("/recordings/{recording_id}/metadata", api_recordings_patch_metadata)
     app.router.add_get("/recordings/{recording_id}/download", api_recordings_download)
@@ -1062,6 +1204,7 @@ async def create_app() -> web.Application:
 
     async def on_cleanup(_: web.Application) -> None:
         await recorder.stop()
+        await app["youtube_uploader"].close()
         await session.close()
         await db.close()
 
