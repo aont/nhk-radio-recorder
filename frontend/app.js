@@ -566,6 +566,12 @@ async function bulkDownload() {
   a.click();
 }
 
+function setAllBulkSelection(checked) {
+  document.querySelectorAll('input.bulk').forEach((checkbox) => {
+    checkbox.checked = checked;
+  });
+}
+
 async function bulkUploadToYoutube() {
   const ids = [...document.querySelectorAll('.bulk:checked')].map(x => x.value);
   if (!ids.length) return alert('No recordings selected.');
@@ -596,6 +602,8 @@ document.querySelector('#keyword').oninput = renderSeries;
 document.querySelector('#broadcastFilter').onchange = renderSeries;
 document.querySelector('#refreshReservations').onclick = loadReservations;
 document.querySelector('#refreshRecordings').onclick = loadRecordings;
+document.querySelector('#selectAllBulk').onclick = () => setAllBulkSelection(true);
+document.querySelector('#clearAllBulk').onclick = () => setAllBulkSelection(false);
 document.querySelector('#bulkDownload').onclick = bulkDownload;
 document.querySelector('#bulkUploadToYoutube').onclick = bulkUploadToYoutube;
 document.querySelector('#seekBack10').onclick = () => seekPlayerBy(-10);
