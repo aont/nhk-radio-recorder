@@ -28,6 +28,18 @@
       </div>
       <div id="backendBaseUriStatus" class="small"></div>
 
+      <h2>Appearance</h2>
+      <div class="filters">
+        <label for="themeMode">Theme</label>
+        <select id="themeMode">
+          <option value="auto">Auto (prefers-color-scheme)</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+        <button id="saveThemeMode" type="button">Save theme setting</button>
+      </div>
+      <div id="themeModeStatus" class="small"></div>
+
       <h2>YouTube Music Accounts</h2>
       <p class="small">Add one or more YouTube accounts. Each completed recording will be uploaded to all configured accounts.</p>
       <div class="yt-account-form">

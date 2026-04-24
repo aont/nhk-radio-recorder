@@ -12,6 +12,7 @@ function debugLog(...args) {
 }
 
 const BACKEND_BASE_URI_KEY = 'nhkRadioRecorder.backendBaseUri';
+const THEME_MODE_KEY = 'nhkRadioRecorder.themeMode';
 const DEFAULT_TAB = 'recordings';
 
 
@@ -134,6 +135,65 @@ function initTabs() {
     button.onclick = () => activateTab(button.dataset.tab);
   });
   activateTab(DEFAULT_TAB);
+}
+
+
+function normalizeThemeMode(value) {
+  const mode = String(value || '').toLowerCase();
+  return ['light', 'dark', 'auto'].includes(mode) ? mode : 'auto';
+}
+
+function getThemeMode() {
+  return normalizeThemeMode(localStorage.getItem(THEME_MODE_KEY) || 'auto');
+}
+
+function getPreferredColorScheme() {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function applyTheme(mode = getThemeMode()) {
+  const normalizedMode = normalizeThemeMode(mode);
+  const resolved = normalizedMode === 'auto' ? getPreferredColorScheme() : normalizedMode;
+  document.documentElement.dataset.theme = resolved;
+  return { mode: normalizedMode, resolved };
+}
+
+function setThemeModeStatus(message) {
+  const statusEl = document.querySelector('#themeModeStatus');
+  if (!statusEl) return;
+  statusEl.textContent = message;
+}
+
+function initThemeSettings() {
+  const select = document.querySelector('#themeMode');
+  const saveButton = document.querySelector('#saveThemeMode');
+  if (!select || !saveButton) return;
+
+  const mode = getThemeMode();
+  select.value = mode;
+  const state = applyTheme(mode);
+  setThemeModeStatus(state.mode === 'auto'
+    ? `Theme: Auto (currently ${state.resolved}).`
+    : `Theme: ${state.resolved}.`);
+
+  saveButton.onclick = () => {
+    const selectedMode = normalizeThemeMode(select.value);
+    localStorage.setItem(THEME_MODE_KEY, selectedMode);
+    const nextState = applyTheme(selectedMode);
+    setThemeModeStatus(nextState.mode === 'auto'
+      ? `Saved: Auto theme (currently ${nextState.resolved}).`
+      : `Saved: ${nextState.resolved} theme.`);
+  };
+
+  const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+  const onPreferenceChanged = () => {
+    if (getThemeMode() !== 'auto') return;
+    const updatedState = applyTheme('auto');
+    setThemeModeStatus(`Theme: Auto (currently ${updatedState.resolved}).`);
+  };
+
+  if (typeof mediaQuery.addEventListener === 'function') mediaQuery.addEventListener('change', onPreferenceChanged);
+  else if (typeof mediaQuery.addListener === 'function') mediaQuery.addListener(onPreferenceChanged);
 }
 
 function normalizeBackendBaseUri(value) {
@@ -597,6 +657,8 @@ async function bulkUploadToYoutube() {
   await loadRecordings();
 }
 
+applyTheme();
+
 document.querySelector('#loadSeries').onclick = loadSeries;
 document.querySelector('#keyword').oninput = renderSeries;
 document.querySelector('#broadcastFilter').onchange = renderSeries;
@@ -645,6 +707,7 @@ document.addEventListener('click', async (e) => {
 });
 
 initBackendBaseUriSettings();
+initThemeSettings();
 initTabs();
 loadReservations();
 loadRecordings();

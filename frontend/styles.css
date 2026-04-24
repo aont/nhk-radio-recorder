@@ -1,15 +1,64 @@
-body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fb; color: #222; }
-header { background: #1f4b99; color: white; padding: 12px 20px; }
-main { padding: 16px; display: grid; grid-template-columns: 1fr; gap: 16px; }
-section { background: white; border-radius: 8px; padding: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
-.filters { display: flex; gap: 8px; flex-wrap: wrap; }
-input, select, button { padding: 6px; }
-ul { list-style: none; padding: 0; max-height: 320px; overflow: auto; }
-li { border-bottom: 1px solid #ddd; padding: 8px 0; }
-.small { color: #666; font-size: 12px; }
-.actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
-audio { width: 100%; background: #f0f2f7; }
+:root {
+  --bg: #f5f7fb;
+  --text: #222;
+  --header-bg: #1f4b99;
+  --header-text: #fff;
+  --panel-bg: #fff;
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  --border: #ddd;
+  --muted: #666;
+  --audio-bg: #f0f2f7;
+  --tab-bg: #e9eef9;
+  --tab-border: #c8d5f3;
+  --tab-active-bg: #1f4b99;
+  --tab-active-text: #fff;
+  --tab-active-border: #1f4b99;
+  --reservation-border: #eef2fb;
+  --now-playing: #1f4b99;
+}
 
+:root[data-theme='dark'] {
+  --bg: #12151c;
+  --text: #e8ebf3;
+  --header-bg: #0d234f;
+  --header-text: #f6f8ff;
+  --panel-bg: #1b2230;
+  --shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  --border: #3b465d;
+  --muted: #a8b2c5;
+  --audio-bg: #222c3f;
+  --tab-bg: #243149;
+  --tab-border: #40557b;
+  --tab-active-bg: #5b83d8;
+  --tab-active-text: #0f1625;
+  --tab-active-border: #5b83d8;
+  --reservation-border: #334464;
+  --now-playing: #9dc0ff;
+}
+
+body {
+  font-family: Arial, sans-serif;
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+header { background: var(--header-bg); color: var(--header-text); padding: 12px 20px; }
+main { padding: 16px; display: grid; grid-template-columns: 1fr; gap: 16px; }
+section { background: var(--panel-bg); border-radius: 8px; padding: 12px; box-shadow: var(--shadow); }
+.filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+input, select, button, textarea {
+  padding: 6px;
+  background: var(--panel-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+ul { list-style: none; padding: 0; max-height: 320px; overflow: auto; }
+li { border-bottom: 1px solid var(--border); padding: 8px 0; }
+.small { color: var(--muted); font-size: 12px; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+audio { width: 100%; background: var(--audio-bg); }
 
 .player-section audio {
   display: block;
@@ -20,7 +69,7 @@ audio { width: 100%; background: #f0f2f7; }
 .small a { word-break: break-all; }
 
 .reservation-group-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
-.reservation-items { margin-top: 8px; padding-left: 10px; border-left: 2px solid #eef2fb; max-height: none; }
+.reservation-items { margin-top: 8px; padding-left: 10px; border-left: 2px solid var(--reservation-border); max-height: none; }
 .reservation-items > li:last-child { border-bottom: 0; }
 
 #seriesWatchReservationList,
@@ -40,13 +89,12 @@ audio { width: 100%; background: #f0f2f7; }
   overflow: visible;
 }
 
-
 .player-controls { display: flex; gap: 8px; margin: 8px 0; }
 
 .now-playing {
   margin-bottom: 8px;
   font-weight: 600;
-  color: #1f4b99;
+  color: var(--now-playing);
 }
 
 .recording-status-pill {
@@ -78,7 +126,6 @@ audio { width: 100%; background: #f0f2f7; }
   color: #495057;
 }
 
-
 .tab-nav {
   display: flex;
   gap: 8px;
@@ -86,17 +133,17 @@ audio { width: 100%; background: #f0f2f7; }
 }
 
 .tab-button {
-  background: #e9eef9;
-  border: 1px solid #c8d5f3;
+  background: var(--tab-bg);
+  border: 1px solid var(--tab-border);
   border-radius: 999px;
   padding: 8px 14px;
   cursor: pointer;
 }
 
 .tab-button.active {
-  background: #1f4b99;
-  color: #fff;
-  border-color: #1f4b99;
+  background: var(--tab-active-bg);
+  color: var(--tab-active-text);
+  border-color: var(--tab-active-border);
 }
 
 .tab-panel[hidden] {
@@ -104,7 +151,6 @@ audio { width: 100%; background: #f0f2f7; }
 }
 
 textarea {
-  padding: 6px;
   font-family: monospace;
 }
 
