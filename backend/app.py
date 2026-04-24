@@ -34,6 +34,7 @@ RECORDINGS_FILE = DATA_DIR / "recordings.json"
 SERIES_CACHE_FILE = DATA_DIR / "series_cache.json"
 DATABASE_FILE = DATA_DIR / "app.sqlite3"
 YOUTUBE_ACCOUNTS_FILE = DATA_DIR / "youtube_accounts.json"
+DEFAULT_RECORDING_ALBUM = "NHK Radio Recordings"
 
 SERIES_URL_TMPL = "https://www.nhk.or.jp/radio-api/app/v1/web/series?kana={kana}"
 SERIES_KANA_LIST = ("a", "k", "s", "t", "n", "h", "m", "y", "r", "w")
@@ -1037,6 +1038,7 @@ def build_metadata_tags(event: dict[str, Any], reservation_metadata: dict[str, s
     tags = {
         "title": event.get("name") or "Untitled",
         "description": description,
+        "album": DEFAULT_RECORDING_ALBUM,
     }
     if series_title:
         tags["album"] = series_title
@@ -1231,7 +1233,10 @@ async def _convert_to_m4a(rec: dict[str, Any]) -> Path:
     m4a = rec_dir / "download.m4a"
     manifest = rec_dir / "recording.m3u8"
     cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", str(manifest)]
-    for k, v in rec.get("metadata", {}).items():
+    metadata = {k: str(v) for k, v in (rec.get("metadata") or {}).items()}
+    if not metadata.get("album", "").strip():
+        metadata["album"] = DEFAULT_RECORDING_ALBUM
+    for k, v in metadata.items():
         cmd += ["-metadata", f"{k}={v}"]
     cmd += ["-c", "copy", str(m4a)]
     proc = await asyncio.create_subprocess_exec(*cmd)
