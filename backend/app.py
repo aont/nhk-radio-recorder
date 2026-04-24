@@ -192,6 +192,18 @@ async def _db_set_json(db: aiosqlite.Connection, key: str, value: Any) -> None:
     await db.commit()
 
 
+def to_jsonable(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(k): to_jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [to_jsonable(v) for v in value]
+    if isinstance(value, Path):
+        return str(value)
+    return str(value)
+
+
 async def migrate_json_to_sqlite(db: aiosqlite.Connection) -> None:
     legacy_sources = (
         ("reservations", RESERVATIONS_FILE, []),
@@ -614,7 +626,7 @@ class YouTubeMusicUploader:
                 "alias": account["alias"],
                 "status": "uploaded",
                 "uploaded_at": utc_now().isoformat(),
-                "detail": payload.get("response"),
+                "detail": to_jsonable(payload.get("response")),
             }
         except Exception as exc:
             logger.exception("youtube upload failed: rec_id=%s account=%s", rec.get("id"), account.get("alias"))
