@@ -587,10 +587,29 @@ class YouTubeMusicUploader:
         recording_ids: list[str],
         account: dict[str, Any],
     ) -> list[dict[str, Any]]:
+        logger.info(
+            "manual youtube bulk upload started: account_id=%s alias=%s total_recordings=%d",
+            account.get("id"),
+            account.get("alias"),
+            len(recording_ids),
+        )
         rows: list[dict[str, Any]] = []
-        for rec_id in recording_ids:
+        for index, rec_id in enumerate(recording_ids, start=1):
+            logger.info(
+                "manual youtube upload progress: account_id=%s alias=%s recording=%d/%d rec_id=%s",
+                account.get("id"),
+                account.get("alias"),
+                index,
+                len(recording_ids),
+                rec_id,
+            )
             rec = await _recording_by_id(app["db"], rec_id)
             if not rec:
+                logger.warning(
+                    "manual youtube upload skipped: rec_id not found account_id=%s rec_id=%s",
+                    account.get("id"),
+                    rec_id,
+                )
                 rows.append(
                     {
                         "recording_id": rec_id,
@@ -603,14 +622,41 @@ class YouTubeMusicUploader:
             results = await self.upload_recording_for_accounts(app, rec_id, [account])
             row = results[0] if results else {"status": "failed", "detail": "upload did not run"}
             row["recording_id"] = rec_id
+            logger.info(
+                "manual youtube upload result: account_id=%s rec_id=%s status=%s upload_status=%s",
+                account.get("id"),
+                rec_id,
+                row.get("status"),
+                row.get("upload_status"),
+            )
             rows.append(row)
+        success_count = sum(1 for row in rows if row.get("status") == "uploaded")
+        logger.info(
+            "manual youtube bulk upload finished: account_id=%s alias=%s uploaded=%d failed_or_other=%d",
+            account.get("id"),
+            account.get("alias"),
+            success_count,
+            len(rows) - success_count,
+        )
         return rows
 
     async def _upload_for_account(self, rec: dict[str, Any], account: dict[str, Any]) -> dict[str, Any]:
         rec_dir = RECORDINGS_DIR / rec["id"]
         m4a = rec_dir / "download.m4a"
         if not m4a.exists():
+            logger.info(
+                "youtube upload preparing audio: rec_id=%s account_id=%s action=convert_to_m4a",
+                rec.get("id"),
+                account.get("id"),
+            )
             m4a = await _convert_to_m4a(rec)
+        logger.info(
+            "youtube upload start: rec_id=%s account_id=%s alias=%s file=%s",
+            rec.get("id"),
+            account.get("id"),
+            account.get("alias"),
+            m4a,
+        )
 
         def run_upload() -> dict[str, Any]:
             auth_file = rec_dir / f"yt_headers_{account['id']}.json"
@@ -1223,6 +1269,11 @@ async def api_recordings_bulk_upload(request: web.Request) -> web.Response:
     payload = await request.json()
     ids = payload.get("ids", [])
     account_id = str(payload.get("account_id") or "").strip()
+    logger.info(
+        "bulk upload request received: account_id=%s ids_count=%s",
+        account_id or "(missing)",
+        len(ids) if isinstance(ids, list) else "(invalid)",
+    )
     if not isinstance(ids, list) or not ids:
         raise web.HTTPBadRequest(text="ids must be a non-empty array")
     if not account_id:
@@ -1240,6 +1291,13 @@ async def api_recordings_bulk_upload(request: web.Request) -> web.Response:
         request.app,
         normalized_ids,
         account,
+    )
+    uploaded_count = sum(1 for row in results if row.get("status") == "uploaded")
+    logger.info(
+        "bulk upload request completed: account_id=%s requested=%d uploaded=%d",
+        account_id,
+        len(normalized_ids),
+        uploaded_count,
     )
     return web.json_response({"ok": True, "results": results})
 
