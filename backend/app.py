@@ -621,12 +621,15 @@ class YouTubeMusicUploader:
 
         try:
             payload = await asyncio.get_running_loop().run_in_executor(self.executor, run_upload)
+            raw_response = payload.get("response")
+            upload_ok, upload_status = self._interpret_upload_response(raw_response)
             return {
                 "account_id": account["id"],
                 "alias": account["alias"],
-                "status": "uploaded",
+                "status": "uploaded" if upload_ok else "failed",
                 "uploaded_at": utc_now().isoformat(),
-                "detail": to_jsonable(payload.get("response")),
+                "detail": to_jsonable(raw_response),
+                "upload_status": upload_status,
             }
         except Exception as exc:
             logger.exception("youtube upload failed: rec_id=%s account=%s", rec.get("id"), account.get("alias"))
@@ -637,6 +640,20 @@ class YouTubeMusicUploader:
                 "uploaded_at": utc_now().isoformat(),
                 "detail": str(exc),
             }
+
+    @staticmethod
+    def _interpret_upload_response(response: Any) -> tuple[bool, str]:
+        status = str(response)
+        if status == "STATUS_SUCCEEDED":
+            return True, status
+        if status.startswith("STATUS_"):
+            return False, status
+
+        status_code = getattr(response, "status_code", None)
+        if isinstance(status_code, int):
+            return 200 <= status_code < 300, f"HTTP_{status_code}"
+
+        return True, status
 
     async def _append_upload_result(self, db: aiosqlite.Connection, rec_id: str, result: dict[str, Any]) -> None:
         async with RECORDINGS_LOCK:
