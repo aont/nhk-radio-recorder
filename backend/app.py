@@ -559,6 +559,12 @@ class YouTubeMusicUploader:
 
     async def upload_recording_for_all_accounts(self, app: web.Application, rec_id: str) -> None:
         accounts = await read_youtube_accounts(app["db"])
+        if DEBUG_LOG:
+            logger.info(
+                "[debug] auto youtube upload trigger: rec_id=%s configured_accounts=%d",
+                rec_id,
+                len(accounts),
+            )
         if not accounts:
             logger.info("youtube upload skipped: no configured accounts")
             return
@@ -573,13 +579,44 @@ class YouTubeMusicUploader:
     ) -> list[dict[str, Any]]:
         rec = await _recording_by_id(app["db"], rec_id)
         if not rec:
+            if DEBUG_LOG:
+                logger.info("[debug] youtube upload skipped: recording not found rec_id=%s", rec_id)
             return []
 
+        if DEBUG_LOG:
+            logger.info(
+                "[debug] youtube upload queue start: rec_id=%s accounts=%s",
+                rec_id,
+                [a.get("id") for a in accounts],
+            )
         results: list[dict[str, Any]] = []
         for account in accounts:
+            if DEBUG_LOG:
+                logger.info(
+                    "[debug] youtube upload account begin: rec_id=%s account_id=%s alias=%s",
+                    rec_id,
+                    account.get("id"),
+                    account.get("alias"),
+                )
             result = await self._upload_for_account(rec, account)
             await self._append_upload_result(app["db"], rec_id, result)
+            if DEBUG_LOG:
+                logger.info(
+                    "[debug] youtube upload account end: rec_id=%s account_id=%s status=%s upload_status=%s",
+                    rec_id,
+                    account.get("id"),
+                    result.get("status"),
+                    result.get("upload_status"),
+                )
             results.append(result)
+        if DEBUG_LOG:
+            uploaded = sum(1 for row in results if row.get("status") == "uploaded")
+            logger.info(
+                "[debug] youtube upload queue finished: rec_id=%s uploaded=%d failed_or_other=%d",
+                rec_id,
+                uploaded,
+                len(results) - uploaded,
+            )
         return results
 
     async def upload_recordings_for_account(
@@ -651,6 +688,21 @@ class YouTubeMusicUploader:
                 account.get("id"),
             )
             m4a = await _convert_to_m4a(rec)
+            if DEBUG_LOG:
+                logger.info(
+                    "[debug] youtube upload converted audio: rec_id=%s account_id=%s file=%s",
+                    rec.get("id"),
+                    account.get("id"),
+                    m4a,
+                )
+        elif DEBUG_LOG:
+            logger.info(
+                "[debug] youtube upload using existing audio: rec_id=%s account_id=%s file=%s size_bytes=%s",
+                rec.get("id"),
+                account.get("id"),
+                m4a,
+                m4a.stat().st_size,
+            )
         logger.info(
             "youtube upload start: rec_id=%s account_id=%s alias=%s file=%s",
             rec.get("id"),
@@ -667,9 +719,23 @@ class YouTubeMusicUploader:
             return {"response": response}
 
         try:
+            if DEBUG_LOG:
+                logger.info(
+                    "[debug] youtube upload executor submit: rec_id=%s account_id=%s",
+                    rec.get("id"),
+                    account.get("id"),
+                )
             payload = await asyncio.get_running_loop().run_in_executor(self.executor, run_upload)
             raw_response = payload.get("response")
             upload_ok, upload_status = self._interpret_upload_response(raw_response)
+            if DEBUG_LOG:
+                logger.info(
+                    "[debug] youtube upload raw response: rec_id=%s account_id=%s type=%s response=%s",
+                    rec.get("id"),
+                    account.get("id"),
+                    type(raw_response).__name__,
+                    to_jsonable(raw_response),
+                )
             return {
                 "account_id": account["id"],
                 "alias": account["alias"],
@@ -711,6 +777,13 @@ class YouTubeMusicUploader:
                 uploads = rec.setdefault("youtube_uploads", [])
                 if isinstance(uploads, list):
                     uploads.append(result)
+                    if DEBUG_LOG:
+                        logger.info(
+                            "[debug] youtube upload result appended: rec_id=%s upload_entries=%d last_status=%s",
+                            rec_id,
+                            len(uploads),
+                            result.get("status"),
+                        )
             await write_json(db, RECORDINGS_FILE, recordings)
 
 
@@ -995,7 +1068,29 @@ class RecorderService:
         await self._mark_reservation(reservation["id"], "done")
         self._write_recording_debug_state(rec_dir, "reservation_done", {"reservation_id": reservation["id"]})
         logger.info("recording completed: reservation_id=%s rec_id=%s", reservation["id"], rec_id)
+        self._write_recording_debug_state(
+            rec_dir,
+            "youtube_upload_started",
+            {"reservation_id": reservation["id"], "rec_id": rec_id},
+        )
+        if DEBUG_LOG:
+            logger.info(
+                "[debug] recording post-process: auto upload start reservation_id=%s rec_id=%s",
+                reservation["id"],
+                rec_id,
+            )
         await self.app["youtube_uploader"].upload_recording_for_all_accounts(self.app, rec_id)
+        self._write_recording_debug_state(
+            rec_dir,
+            "youtube_upload_finished",
+            {"reservation_id": reservation["id"], "rec_id": rec_id},
+        )
+        if DEBUG_LOG:
+            logger.info(
+                "[debug] recording post-process: auto upload finished reservation_id=%s rec_id=%s",
+                reservation["id"],
+                rec_id,
+            )
 
     def _write_recording_debug_state(self, rec_dir: Path, state: str, extra: dict[str, Any] | None = None) -> None:
         payload: dict[str, Any] = {
@@ -1416,7 +1511,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--debug-log",
         action="store_true",
-        help="Enable verbose debug logging for NHK fetch paths and /events",
+        help="Enable verbose debug logging for NHK fetch paths, /events, and YouTube auto upload flow",
     )
     args = parser.parse_args()
 
