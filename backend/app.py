@@ -5,6 +5,7 @@ import argparse
 import contextlib
 import json
 import logging
+import os
 import re
 import shutil
 import tempfile
@@ -48,6 +49,7 @@ RECORDING_END_DELAY_SECONDS = 60
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("nhk-recorder")
 DEBUG_LOG = False
+DEBUG_NHK_JSON_LOG = False
 
 
 @web.middleware
@@ -333,14 +335,14 @@ class NHKClient:
         retries = [0.5, 1.5]
         for i in range(3):
             try:
-                if DEBUG_LOG:
+                if DEBUG_NHK_JSON_LOG:
                     logger.info("[debug] GET JSON: %s (attempt=%d)", url, i + 1)
                 async with self.session.get(url, headers=headers) as res:
                     if res.status >= 500 and i < 2:
                         await asyncio.sleep(retries[i])
                         continue
                     payload = await res.json(content_type=None)
-                    if DEBUG_LOG:
+                    if DEBUG_NHK_JSON_LOG:
                         logger.info(
                             "[debug] GET JSON done: status=%s keys=%s",
                             res.status,
@@ -348,7 +350,7 @@ class NHKClient:
                         )
                     return res.status, payload
             except Exception:
-                if DEBUG_LOG:
+                if DEBUG_NHK_JSON_LOG:
                     logger.exception("[debug] GET JSON failed: %s", url)
                 if i == 2:
                     raise
@@ -1513,7 +1515,13 @@ if __name__ == "__main__":
         action="store_true",
         help="Enable verbose debug logging for NHK fetch paths, /events, and YouTube auto upload flow",
     )
+    parser.add_argument(
+        "--debug-nhk-json-log",
+        action="store_true",
+        help="Enable verbose debug logging only for NHK API JSON fetches",
+    )
     args = parser.parse_args()
 
     DEBUG_LOG = args.debug_log
+    DEBUG_NHK_JSON_LOG = args.debug_nhk_json_log or os.getenv("NHK_DEBUG_JSON_LOG", "").lower() in {"1", "true", "yes", "on"}
     web.run_app(create_app(), host="0.0.0.0", port=args.port)

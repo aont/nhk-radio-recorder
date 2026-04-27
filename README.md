@@ -33,6 +33,7 @@ python backend/app.py --port 8080
 Open http://localhost:8080 .
 
 Use `--debug-log` if you want verbose backend logs.
+NHK API JSON fetch debug logs (`[debug] GET JSON ...`) are disabled by default. Enable them with `--debug-nhk-json-log` (or `NHK_DEBUG_JSON_LOG=1`).
 
 ## API summary
 
@@ -52,7 +53,8 @@ Use `--debug-log` if you want verbose backend logs.
 
 ## Debug logging
 
-- Backend: launch with `--debug-log` to emit detailed request/response logs from the NHK fetch paths and `/events` handler.
+- Backend: launch with `--debug-log` to emit detailed logs from NHK fetch paths, `/events`, and YouTube auto upload flow.
+- Backend (NHK API JSON only): launch with `--debug-nhk-json-log` (or set `NHK_DEBUG_JSON_LOG=1`) to emit `GET JSON` request/response logs.
 - Frontend: open the app with `?debug=1` (for example `http://localhost:8080/?debug=1`) or set `localStorage["nhkRadioRecorder.debugLog"] = "1"` in DevTools.
 
 ## Notes
